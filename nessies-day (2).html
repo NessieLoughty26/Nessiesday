@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Nessie's Day</title>
+  <script>
+    // Generate sunflower icon as a canvas and set as apple-touch-icon
+    window.addEventListener('DOMContentLoaded', () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 180; canvas.height = 180;
+      const ctx = canvas.getContext('2d');
+      // Background - soft green
+      ctx.fillStyle = '#d4e8cc';
+      ctx.beginPath();
+      ctx.roundRect(0, 0, 180, 180, 36);
+      ctx.fill();
+      // Draw petals
+      const cx = 90, cy = 90, petalCount = 13;
+      ctx.fillStyle = '#f5c842';
+      for (let i = 0; i < petalCount; i++) {
+        const angle = (i / petalCount) * Math.PI * 2;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(angle);
+        ctx.beginPath();
+        ctx.ellipse(0, -52, 11, 22, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      // Inner petal ring (darker)
+      ctx.fillStyle = '#e8a820';
+      for (let i = 0; i < petalCount; i++) {
+        const angle = (i / petalCount) * Math.PI * 2 + (Math.PI / petalCount);
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(angle);
+        ctx.beginPath();
+        ctx.ellipse(0, -42, 8, 16, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      // Center circle
+      ctx.fillStyle = '#6b3a1f';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 28, 0, Math.PI * 2);
+      ctx.fill();
+      // Center texture dots
+      ctx.fillStyle = '#8b5a2b';
+      for (let i = 0; i < 18; i++) {
+        const a = (i / 18) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.arc(cx + Math.cos(a) * 14, cy + Math.sin(a) * 14, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = '#5a2e0e';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 10, 0, Math.PI * 2);
+      ctx.fill();
+
+      const dataUrl = canvas.toDataURL('image/png');
+      const link = document.createElement('link');
+      link.rel = 'apple-touch-icon';
+      link.href = dataUrl;
+      document.head.appendChild(link);
+
+      // Also set favicon
+      const favicon = document.createElement('link');
+      favicon.rel = 'icon';
+      favicon.href = dataUrl;
+      document.head.appendChild(favicon);
+    });
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:ital,wght@0,400;0,600;0,700;1,400&family=Pacifico&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #f4f8f2; }
+    @keyframes popIn { from { transform: scale(0.92); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    @keyframes floatUp { 0%,100% { transform: translateY(0px); } 50% { transform: translateY(-4px); } }
+    .float { animation: floatUp 3s ease-in-out infinite; display:inline-block; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // localStorage-based storage (replaces window.storage)
+    const save = (key, val) => { try { localStorage.setItem(key, JSON.stringify(val)); } catch(e) {} };
+    const load = (key, fb) => { try { const r = localStorage.getItem(key); return r !== null ? JSON.parse(r) : fb; } catch(e) { return fb; } };
+
+    const toKey = (d) => d.toISOString().slice(0,10);
+    const today = () => toKey(new Date());
+    const dayName = () => new Date().toLocaleDateString("en-US",{weekday:"long"});
+    const fullDate = () => new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
+    const weekKey = () => { const d=new Date(),day=d.getDay(),mon=new Date(d); mon.setDate(d.getDate()-(day===0?6:day-1)); return toKey(mon); };
+    const monthKey = () => new Date().toISOString().slice(0,7);
+    const DAYS_SHORT = ["Mo","Tu","We","Th","Fr","Sa","Su"];
+    const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+    const MOODS = [{emoji:"🌟",label:"Amazing"},{emoji:"😊",label:"Good"},{emoji:"😐",label:"Okay"},{emoji:"😔",label:"Low"},{emoji:"🌧️",label:"Rough"}];
+    const WATER_GOAL = 8;
+    const DEFAULT_DAILY   = ["Make bed","Wipe counters","Dishes","Quick tidy","Take out trash"];
+    const DEFAULT_WEEKLY  = {Mon:["Vacuum"],Tue:["Bathroom"],Wed:["Mop floors"],Thu:["Dust"],Fri:["Laundry"],Sat:["Kitchen deep clean"],Sun:["Rest / catch up"]};
+    const DEFAULT_MONTHLY = ["Clean fridge","Wash windows","Deep clean oven","Descale kettle"];
+    const DEFAULT_AM = ["Cleanser","Toner","Vitamin C","Moisturiser","SPF"];
+    const DEFAULT_PM = ["Oil cleanser","Cleanser","Toner","Serum","Moisturiser","Eye cream"];
+    const DEFAULT_SYMPTOMS = ["Cramps","Spotting","Tender breasts","Tired","Fatigue","Acne","Headache","Bloating","Mood swings","Back pain","Nausea"];
+    const FLOW_LEVELS = ["Spotting","Light","Medium","Heavy"];
+    const TABS = [
+      {id:"today",    label:"Today",    icon:"☀️"},
+      {id:"habits",   label:"Habits",   icon:"🔥"},
+      {id:"health",   label:"Health",   icon:"🫀"},
+      {id:"home",     label:"Home",     icon:"🏠"},
+      {id:"calendar", label:"Review",   icon:"📅"},
+      {id:"settings", label:"Settings", icon:"⚙️"},
+    ];
+
+    const S = {
+      root:         {minHeight:"100vh",background:"linear-gradient(160deg,#f4f8f2 0%,#eef5eb 60%,#f0f5f0 100%)",fontFamily:"'Nunito','Segoe UI',sans-serif",color:"#2e4a30",maxWidth:480,margin:"0 auto",paddingBottom:70},
+      header:       {background:"linear-gradient(135deg,#d4e8cc 0%,#c8e0be 50%,#cce4c8 100%)",borderBottom:"1.5px solid #b8d4ae",padding:"14px 16px 11px",textAlign:"center",position:"sticky",top:0,zIndex:10,boxShadow:"0 2px 8px rgba(80,130,70,0.10)"},
+      title:        {fontSize:24,fontFamily:"'Pacifico',cursive",fontWeight:400,margin:"3px 0",color:"#3a5e36",letterSpacing:"0.01em"},
+      dateSmall:    {fontSize:10,color:"#6a9460",margin:0,letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600},
+      nav:          {position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:"linear-gradient(135deg,#d4e8cc,#cce4c8)",borderTop:"1.5px solid #b8d4ae",display:"flex",zIndex:20,boxShadow:"0 -2px 8px rgba(80,130,70,0.08)"},
+      tabBtn:       {flex:1,display:"flex",flexDirection:"column",alignItems:"center",padding:"7px 2px",background:"none",border:"none",cursor:"pointer",color:"#7aaa70",fontFamily:"'Nunito',sans-serif",fontSize:10,fontWeight:600,gap:1},
+      tabActive:    {color:"#3a5e36",borderTop:"2.5px solid #7aaa70"},
+      main:         {padding:"12px 11px 14px"},
+      col:          {display:"flex",flexDirection:"column",gap:10},
+      card:         {background:"rgba(248,253,246,0.92)",borderRadius:20,padding:"13px 14px",boxShadow:"0 2px 10px rgba(80,130,70,0.07)",border:"1.5px solid #d0e8c8",backdropFilter:"blur(4px)"},
+      subNav:       {display:"flex",background:"#ddeedd",borderRadius:14,padding:4,gap:3,border:"1.5px solid #c4dcc0"},
+      subTab:       {flex:1,padding:"6px 4px",background:"none",border:"none",cursor:"pointer",borderRadius:10,fontSize:11,color:"#6a9460",fontFamily:"'Nunito',sans-serif",fontWeight:600},
+      subTabActive: {background:"rgba(248,253,246,0.95)",color:"#3a5e36",fontWeight:700,boxShadow:"0 1px 4px rgba(80,130,70,0.12)"},
+      input:        {flex:1,background:"#f4faf2",border:"1.5px solid #c4dcc0",borderRadius:12,padding:"8px 11px",fontFamily:"'Nunito',sans-serif",fontSize:13,color:"#2e4a30",outline:"none",boxSizing:"border-box",width:"100%"},
+      textarea:     {background:"#f4faf2",border:"1.5px solid #c4dcc0",borderRadius:12,padding:"8px 11px",fontFamily:"'Nunito',sans-serif",fontSize:13,color:"#2e4a30",resize:"vertical",boxSizing:"border-box",outline:"none"},
+      label:        {display:"block",fontSize:10,color:"#7aaa70",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:4,fontWeight:700},
+      btn:          {background:"linear-gradient(135deg,#88bb78,#5e9a50)",color:"#f4faf2",border:"none",borderRadius:12,padding:"8px 16px",fontFamily:"'Nunito',sans-serif",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",boxShadow:"0 2px 6px rgba(80,130,70,0.22)"},
+      ghostBtn:     {background:"rgba(248,253,246,0.8)",border:"1.5px solid #c4dcc0",borderRadius:10,padding:"5px 10px",fontFamily:"'Nunito',sans-serif",fontSize:12,cursor:"pointer",color:"#6a9460",fontWeight:600},
+      iconBtn:      {background:"none",border:"none",cursor:"pointer",fontSize:14,padding:"2px 4px",color:"#7aaa70"},
+      chip:         {background:"#ddeedd",borderRadius:20,padding:"3px 9px",fontSize:12,display:"inline-flex",alignItems:"center",gap:3,border:"1px solid #c4dcc0"},
+      chipX:        {background:"none",border:"none",cursor:"pointer",color:"#7aaa70",fontSize:12,padding:0,lineHeight:1},
+      progressBar:  {height:7,background:"#ddeedd",borderRadius:99,overflow:"hidden",marginBottom:6},
+      progressFill: {height:"100%",background:"linear-gradient(90deg,#88bb78,#5e9a50)",borderRadius:99},
+      check:        {width:24,height:24,borderRadius:"50%",border:"2px solid #c4dcc0",background:"rgba(248,253,246,0.8)",cursor:"pointer",fontSize:12,color:"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.15s"},
+      checkDone:    {background:"linear-gradient(135deg,#88bb78,#5e9a50)",borderColor:"#5e9a50",color:"#f4faf2"},
+      moodPill:     {flex:1,display:"flex",justifyContent:"center",padding:"8px 3px",borderRadius:12,border:"1.5px solid transparent",background:"#f4faf2",cursor:"pointer"},
+      moodPillActive:{border:"1.5px solid #88bb78",background:"#ddeedd",boxShadow:"0 2px 6px rgba(80,130,70,0.12)"},
+      pill:         {background:"#f4faf2",border:"1.5px solid #c4dcc0",borderRadius:20,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"'Nunito',sans-serif",color:"#3a5e36",fontWeight:600},
+      pillActive:   {background:"linear-gradient(135deg,#88bb78,#5e9a50)",color:"#f4faf2",borderColor:"#5e9a50",fontWeight:700},
+      dot:          {width:22,height:22,borderRadius:"50%",border:"1.5px solid #c4dcc0",background:"rgba(248,253,246,0.8)",cursor:"pointer",fontSize:9,color:"transparent",display:"inline-flex",alignItems:"center",justifyContent:"center"},
+      dotDone:      {background:"linear-gradient(135deg,#88bb78,#5e9a50)",borderColor:"#5e9a50",color:"#f4faf2"},
+      arrowBtn:     {background:"rgba(248,253,246,0.8)",border:"1.5px solid #c4dcc0",borderRadius:10,padding:"4px 13px",fontSize:17,cursor:"pointer",color:"#3a5e36"},
+      toast:        {position:"fixed",top:68,left:"50%",transform:"translateX(-50%)",background:"linear-gradient(135deg,#88bb78,#5e9a50)",color:"#f4faf2",padding:"9px 20px",borderRadius:40,fontSize:13,fontWeight:700,zIndex:999,boxShadow:"0 4px 14px rgba(80,130,70,0.25)",whiteSpace:"nowrap"},
+    };
+
+    function Card({title,children,compact}) {
+      return (
+        <div style={S.card}>
+          {title && <div style={{marginBottom:compact?8:12,paddingBottom:compact?7:10,borderBottom:"1.5px solid #d0e8c8"}}><span style={{fontSize:13,fontWeight:700,color:"#3a5e36",fontFamily:"'Nunito',sans-serif"}}>{title}</span></div>}
+          {children}
+        </div>
+      );
+    }
+    function Btn({onClick,children,full,small}) {
+      return <button onClick={onClick} style={{...S.btn,...(full?{width:"100%",boxSizing:"border-box"}:{}),...(small?{padding:"5px 10px",fontSize:12}:{})}}>{children}</button>;
+    }
+
+    function App() {
+      const [tab,       setTab]       = useState("today");
+      const [loaded,    setLoaded]    = useState(false);
+      const [toast,     setToast]     = useState(null);
+      const [journal,   setJournal]   = useState({});
+      const [habits,    setHabits]    = useState([]);
+      const [health,    setHealth]    = useState({});
+      const [moodLog,   setMoodLog]   = useState({});
+      const [skincare,  setSkincare]  = useState({});
+      const [period,    setPeriod]    = useState({});
+      const [cleaning,  setCleaning]  = useState({});
+      const [skincareSteps, setSkincareSteps] = useState({am:DEFAULT_AM,pm:DEFAULT_PM});
+      const [symptoms,      setSymptoms]      = useState(DEFAULT_SYMPTOMS);
+      const [dailyTasks,    setDailyTasks]    = useState(DEFAULT_DAILY);
+      const [weeklyTasks,   setWeeklyTasks]   = useState(DEFAULT_WEEKLY);
+      const [monthlyTasks,  setMonthlyTasks]  = useState(DEFAULT_MONTHLY);
+
+      useEffect(()=>{
+        const j   = load("journal",{});
+        const h   = load("habits",[]);
+        const he  = load("health",{});
+        const ml  = load("moodLog",{});
+        const sk  = load("skincare",{});
+        const pe  = load("period",{});
+        const cl  = load("cleaning",{});
+        const sks = load("skincareSteps",{am:DEFAULT_AM,pm:DEFAULT_PM});
+        const sym = load("symptoms",DEFAULT_SYMPTOMS);
+        const dt  = load("dailyTasks",DEFAULT_DAILY);
+        const wt  = load("weeklyTasks",DEFAULT_WEEKLY);
+        const mt  = load("monthlyTasks",DEFAULT_MONTHLY);
+        setJournal(j); setHabits(h); setHealth(he); setMoodLog(ml);
+        setSkincare(sk); setPeriod(pe); setCleaning(cl);
+        setSkincareSteps(sks); setSymptoms(sym);
+        setDailyTasks(dt); setWeeklyTasks(wt); setMonthlyTasks(mt);
+        setLoaded(true);
+      },[]);
+
+      const showToast = (msg) => { setToast(msg); setTimeout(()=>setToast(null),2200); };
+
+      const updateJournal  = (field, val) => { const n={...journal,[today()]:{...(journal[today()]||{}),[field]:val}}; setJournal(n); save("journal",n); };
+      const updateHealth   = (field, val) => { const n={...health,[today()]:{...(health[today()]||{}),[field]:val}}; setHealth(n); save("health",n); };
+      const setMood        = (mood) => { const n={...moodLog,[today()]:{...(moodLog[today()]||{}),mood}}; setMoodLog(n); save("moodLog",n); showToast("Mood logged ✨"); };
+      const setMoodNote    = (note) => { const n={...moodLog,[today()]:{...(moodLog[today()]||{}),note}}; setMoodLog(n); save("moodLog",n); };
+
+      const calcStreak = (c) => { let s=0,d=new Date(); while(true){const k=toKey(d);if(c[k]){s++;d.setDate(d.getDate()-1);}else break;} return s; };
+      const toggleHabit = (id) => {
+        const d=today();
+        const next=habits.map(h=>{ if(h.id!==id) return h; const c={...h.completions,[d]:!h.completions[d]}; return {...h,completions:c,streak:calcStreak(c)}; });
+        setHabits(next); save("habits",next);
+        const h=next.find(h=>h.id===id); if(h?.completions[d]) showToast("🔥 "+h.name+" done!");
+      };
+      const addHabit    = (name) => { if(!name.trim()) return; const n=[...habits,{id:Date.now()+"",name:name.trim(),completions:{},streak:0}]; setHabits(n); save("habits",n); };
+      const removeHabit = (id) => { const n=habits.filter(h=>h.id!==id); setHabits(n); save("habits",n); };
+      const renameHabit = (id,name) => { const n=habits.map(h=>h.id===id?{...h,name}:h); setHabits(n); save("habits",n); };
+
+      const toggleSkincare = (part,step,di) => {
+        const wk=weekKey(),dl=DAYS_SHORT[di],curr=skincare[wk]?.[part]?.[step]?.[dl]||false;
+        const n={...skincare,[wk]:{...(skincare[wk]||{}),[part]:{...(skincare[wk]?.[part]||{}),[step]:{...(skincare[wk]?.[part]?.[step]||{}),[dl]:!curr}}}};
+        setSkincare(n); save("skincare",n);
+      };
+      const updateSkincareSteps = (n) => { setSkincareSteps(n); save("skincareSteps",n); };
+
+      const toggleSymptom = (s,date) => { const d=date||today(); const curr=period[d]?.symptoms||[]; const syms=curr.includes(s)?curr.filter(x=>x!==s):[...curr,s]; const n={...period,[d]:{...(period[d]||{}),symptoms:syms}}; setPeriod(n); save("period",n); };
+      const setFlow       = (flow,date) => { const d=date||today(); const v=period[d]?.flow===flow?null:flow; const n={...period,[d]:{...(period[d]||{}),flow:v}}; setPeriod(n); save("period",n); };
+      const updateSymptoms = (n) => { setSymptoms(n); save("symptoms",n); };
+
+      const toggleCleaning     = (type,name) => { const key=type==="monthly"?monthKey():today(); const fk=type+":"+name+":"+key; const n={...cleaning,[fk]:!cleaning[fk]}; setCleaning(n); save("cleaning",n); };
+      const updateDailyTasks   = (n) => { setDailyTasks(n); save("dailyTasks",n); };
+      const updateWeeklyTasks  = (n) => { setWeeklyTasks(n); save("weeklyTasks",n); };
+      const updateMonthlyTasks = (n) => { setMonthlyTasks(n); save("monthlyTasks",n); };
+
+      const allData = () => ({journal,habits,health,moodLog,skincare,period,cleaning,skincareSteps,symptoms,dailyTasks,weeklyTasks,monthlyTasks});
+      const restoreData = (data) => {
+        setJournal(data.journal||{}); setHabits(data.habits||[]); setHealth(data.health||{});
+        setMoodLog(data.moodLog||{}); setSkincare(data.skincare||{}); setPeriod(data.period||{});
+        setCleaning(data.cleaning||{}); setSkincareSteps(data.skincareSteps||{am:DEFAULT_AM,pm:DEFAULT_PM});
+        setSymptoms(data.symptoms||DEFAULT_SYMPTOMS); setDailyTasks(data.dailyTasks||DEFAULT_DAILY);
+        setWeeklyTasks(data.weeklyTasks||DEFAULT_WEEKLY); setMonthlyTasks(data.monthlyTasks||DEFAULT_MONTHLY);
+        Object.entries(data).forEach(([k,v])=>save(k,v));
+        showToast("Data restored! ✅");
+      };
+
+      if(!loaded) return <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10,height:"100vh",background:"linear-gradient(160deg,#f4f8f2,#eef5eb)",fontFamily:"'Pacifico',cursive",color:"#6a9460",fontSize:20}}>🌿<span>Loading...</span></div>;
+
+      const todayH = health[today()]||{};
+
+      return (
+        <div style={S.root}>
+          {toast && <div style={S.toast}>{toast}</div>}
+          <header style={S.header}>
+            <p style={S.dateSmall}>{dayName()}</p>
+            <h1 style={S.title}><span className="float">🌻</span> Nessie's Day</h1>
+            <p style={S.dateSmall}>{fullDate()}</p>
+          </header>
+          <main style={S.main}>
+            {tab==="today"    && <TodayTab journal={journal[today()]||{}} update={updateJournal} moodLog={moodLog} setMood={setMood} setMoodNote={setMoodNote} habits={habits} toggleHabit={toggleHabit} todayHealth={todayH} updateHealth={updateHealth}/>}
+            {tab==="habits"   && <HabitsTab habits={habits} toggle={toggleHabit} add={addHabit} remove={removeHabit} rename={renameHabit}/>}
+            {tab==="health"   && <HealthTab health={todayH} updateHealth={updateHealth} skincare={skincare} skincareSteps={skincareSteps} toggleSkincare={toggleSkincare} period={period} toggleSymptom={toggleSymptom} setFlow={setFlow} symptoms={symptoms}/>}
+            {tab==="home"     && <HomeTab cleaning={cleaning} toggle={toggleCleaning} dailyTasks={dailyTasks} weeklyTasks={weeklyTasks} monthlyTasks={monthlyTasks}/>}
+            {tab==="calendar" && <CalendarTab journal={journal} habits={habits} health={health} moodLog={moodLog} period={period}/>}
+            {tab==="settings" && <SettingsTab skincareSteps={skincareSteps} updateSkincareSteps={updateSkincareSteps} symptoms={symptoms} updateSymptoms={updateSymptoms} dailyTasks={dailyTasks} updateDailyTasks={updateDailyTasks} weeklyTasks={weeklyTasks} updateWeeklyTasks={updateWeeklyTasks} monthlyTasks={monthlyTasks} updateMonthlyTasks={updateMonthlyTasks} allData={allData} restoreData={restoreData} showToast={showToast}/>}
+          </main>
+          <nav style={S.nav}>
+            {TABS.map(t=>(
+              <button key={t.id} onClick={()=>setTab(t.id)} style={{...S.tabBtn,...(tab===t.id?S.tabActive:{})}}>
+                <span style={{fontSize:16}}>{t.icon}</span>
+                <span style={{fontSize:9,marginTop:1}}>{t.label}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
+      );
+    }
+
+    function TodayTab({journal,update,moodLog,setMood,setMoodNote,habits,toggleHabit,todayHealth,updateHealth}) {
+      const todayMood = moodLog[today()];
+      const [wbInput, setWbInput] = useState("");
+      const wellbeing = journal.wellbeing ? journal.wellbeing.split("||").filter(Boolean) : [];
+      const addWb = () => { if(!wbInput.trim()||wellbeing.length>=3) return; update("wellbeing",[...wellbeing,wbInput.trim()].join("||")); setWbInput(""); };
+
+      const nudges = [];
+      if(!todayMood?.mood) nudges.push("Log your mood 🌈");
+      if((todayHealth.water||0)<4) nudges.push("Only "+(todayHealth.water||0)+" glasses of water 💧");
+      if(habits.length>0 && habits.filter(h=>h.completions[today()]).length===0) nudges.push("No habits checked off yet 🔥");
+
+      return (
+        <div style={S.col}>
+          {nudges.length>0 && (
+            <div style={{background:"#fdf5ed",borderRadius:11,padding:"10px 13px",border:"1px solid #f0d8c0"}}>
+              <div style={{fontSize:10,color:"#c4956a",fontWeight:700,letterSpacing:"0.07em",textTransform:"uppercase",marginBottom:6}}>Still to do today</div>
+              {nudges.map((n,i)=><div key={i} style={{fontSize:12,color:"#8a7060",marginBottom:3}}>{n}</div>)}
+            </div>
+          )}
+
+          <Card title="Mood" compact>
+            <div style={{display:"flex",gap:5}}>
+              {MOODS.map(m=>(
+                <button key={m.label} onClick={()=>setMood(m.label)} style={{...S.moodPill,...(todayMood?.mood===m.label?S.moodPillActive:{})}}>
+                  <span style={{fontSize:20}}>{m.emoji}</span>
+                </button>
+              ))}
+            </div>
+            {todayMood?.mood && <div style={{fontSize:11,color:"#c4956a",textAlign:"center",marginTop:5}}>{todayMood.mood}</div>}
+            <textarea value={todayMood?.note||""} onChange={e=>setMoodNote(e.target.value)} rows={2} placeholder="How are you feeling? (optional note)" style={{...S.textarea,width:"100%",marginTop:8,fontSize:12}}/>
+          </Card>
+
+          <Card title="Gratitude" compact>
+            {[0,1,2].map(i=>(
+              <input key={i} value={journal["g"+i]||""} onChange={e=>update("g"+i,e.target.value)} placeholder={(i+1)+". Grateful for..."} style={{...S.input,marginBottom:i<2?6:0}}/>
+            ))}
+          </Card>
+
+          <Card title="Wellbeing intentions" compact>
+            <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:wellbeing.length?8:0}}>
+              {wellbeing.map((w,i)=>(
+                <span key={i} style={S.chip}>{w}
+                  <button onClick={()=>update("wellbeing",wellbeing.filter((_,j)=>j!==i).join("||"))} style={S.chipX}>×</button>
+                </span>
+              ))}
+            </div>
+            {wellbeing.length<3 && (
+              <div style={{display:"flex",gap:6}}>
+                <input value={wbInput} onChange={e=>setWbInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addWb()} placeholder="Add intention..." style={S.input}/>
+                <Btn onClick={addWb}>+</Btn>
+              </div>
+            )}
+          </Card>
+
+          <Card title={"Water  ·  "+(todayHealth.water||0)+"/"+WATER_GOAL} compact>
+            <div style={{display:"flex",gap:2,flexWrap:"wrap"}}>
+              {Array.from({length:WATER_GOAL}).map((_,i)=>(
+                <button key={i} onClick={()=>updateHealth("water",i<(todayHealth.water||0)?i:i+1)} style={{fontSize:20,background:"none",border:"none",cursor:"pointer",opacity:i<(todayHealth.water||0)?1:0.2,padding:"1px"}}>💧</button>
+              ))}
+            </div>
+          </Card>
+
+          {habits.length>0 && (
+            <Card title="Habits" compact>
+              {habits.map(h=>{
+                const done=!!h.completions[today()];
+                return (
+                  <div key={h.id} style={{display:"flex",alignItems:"center",gap:9,marginBottom:7}}>
+                    <button onClick={()=>toggleHabit(h.id)} style={{...S.check,...(done?S.checkDone:{})}}>✓</button>
+                    <span style={{flex:1,fontSize:13,textDecoration:done?"line-through":"none",color:done?"#b0a090":"#4a3728"}}>{h.name}</span>
+                    {h.streak>0 && <span style={{fontSize:11,color:"#c4956a"}}>🔥{h.streak}</span>}
+                  </div>
+                );
+              })}
+            </Card>
+          )}
+
+          <CollapsiblePrompt label="How do I feel right now? 💭" value={journal.feel||""} onChange={v=>update("feel",v)}/>
+          <CollapsiblePrompt label="What is taking up my mental energy? ⚡" value={journal.distract||""} onChange={v=>update("distract",v)}/>
+          <CollapsiblePrompt label="How can I make today easier? 🌿" value={journal.easier||""} onChange={v=>update("easier",v)}/>
+          <CollapsiblePrompt label="My ideal day looks like... 🌟" value={journal.idealDay||""} onChange={v=>update("idealDay",v)}/>
+          <CollapsiblePrompt label="One thing for more peace today 🕊️" value={journal.peace||""} onChange={v=>update("peace",v)}/>
+          <CollapsiblePrompt label="How I want to feel by end of day 🌙" value={journal.endFeel||""} onChange={v=>update("endFeel",v)}/>
+        </div>
+      );
+    }
+
+    function CollapsiblePrompt({label,value,onChange}) {
+      const [open,setOpen] = useState(!!value);
+      return (
+        <div style={S.card}>
+          <button onClick={()=>setOpen(o=>!o)} style={{background:"none",border:"none",cursor:"pointer",width:"100%",textAlign:"left",display:"flex",justifyContent:"space-between",alignItems:"center",padding:0,fontFamily:"inherit"}}>
+            <span style={{fontSize:12,color:value?"#6b4c3b":"#a09080",fontStyle:"italic"}}>{label}</span>
+            <span style={{fontSize:12,color:"#c4956a"}}>{open?"▲":"▼"}</span>
+          </button>
+          {open && <textarea value={value} onChange={e=>onChange(e.target.value)} rows={3} placeholder="Write freely..." style={{...S.textarea,width:"100%",marginTop:8}}/>}
+        </div>
+      );
+    }
+
+    function HabitsTab({habits,toggle,add,remove,rename}) {
+      const [newName, setNewName] = useState("");
+      const [editing, setEditing] = useState(null);
+      const [editVal, setEditVal] = useState("");
+      const done = habits.filter(h=>!!h.completions[today()]).length;
+
+      return (
+        <div style={S.col}>
+          {habits.length>0 && (
+            <Card compact>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <span style={{fontSize:13,color:"#6b4c3b",fontWeight:600}}>{done}/{habits.length} today</span>
+                <span style={{fontSize:12,color:"#a09080"}}>{Math.round(done/habits.length*100)}%</span>
+              </div>
+              <div style={S.progressBar}><div style={{...S.progressFill,width:Math.round(done/habits.length*100)+"%"}}/></div>
+              {habits.map(h=>{
+                const isDone=!!h.completions[today()];
+                return (
+                  <div key={h.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid #f7f3ee"}}>
+                    <button onClick={()=>toggle(h.id)} style={{...S.check,...(isDone?S.checkDone:{})}}>✓</button>
+                    {editing===h.id ? (
+                      <>
+                        <input value={editVal} onChange={e=>setEditVal(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){rename(h.id,editVal);setEditing(null);}}} style={{...S.input,flex:1}} autoFocus/>
+                        <Btn small onClick={()=>{rename(h.id,editVal);setEditing(null);}}>Save</Btn>
+                        <button onClick={()=>setEditing(null)} style={S.ghostBtn}>✕</button>
+                      </>
+                    ) : (
+                      <>
+                        <span style={{flex:1,fontSize:13,textDecoration:isDone?"line-through":"none",color:isDone?"#b0a090":"#4a3728"}}>{h.name}</span>
+                        {h.streak>1 && <span style={{fontSize:11,color:"#c4956a"}}>🔥{h.streak}</span>}
+                        <button onClick={()=>{setEditing(h.id);setEditVal(h.name);}} style={S.iconBtn}>✏️</button>
+                        <button onClick={()=>remove(h.id)} style={S.iconBtn}>🗑️</button>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </Card>
+          )}
+
+          {habits.length>0 && (
+            <Card title="Streaks" compact>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {habits.map(h=>(
+                  <div key={h.id} style={{background:"#faf7f4",borderRadius:9,padding:"7px 9px",textAlign:"center",minWidth:54}}>
+                    <div style={{fontSize:18,marginBottom:2}}>🔥</div>
+                    <div style={{fontSize:16,fontWeight:600,color:"#6b4c3b"}}>{h.streak}</div>
+                    <div style={{fontSize:9,color:"#a09080",marginTop:2,maxWidth:60,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{h.name}</div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          <Card title="Add habit" compact>
+            <div style={{display:"flex",gap:6}}>
+              <input value={newName} onChange={e=>setNewName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&(add(newName),setNewName(""))} placeholder="New habit name..." style={S.input}/>
+              <Btn onClick={()=>{add(newName);setNewName("");}}>Add</Btn>
+            </div>
+          </Card>
+        </div>
+      );
+    }
+
+    function HealthTab({health,updateHealth,skincare,skincareSteps,toggleSkincare,period,toggleSymptom,setFlow,symptoms}) {
+      const [sub,setSub] = useState("body");
+      return (
+        <div style={S.col}>
+          <div style={S.subNav}>
+            {["body","skincare","cycle"].map(s=>(
+              <button key={s} onClick={()=>setSub(s)} style={{...S.subTab,...(sub===s?S.subTabActive:{})}}>
+                {s==="body"?"🫀 Body":s==="skincare"?"✨ Skincare":"🌸 Cycle"}
+              </button>
+            ))}
+          </div>
+          {sub==="body"     && <BodyTab health={health} updateHealth={updateHealth}/>}
+          {sub==="skincare" && <SkincareTab skincare={skincare} steps={skincareSteps} toggle={toggleSkincare}/>}
+          {sub==="cycle"    && <CycleTab period={period} toggleSymptom={toggleSymptom} setFlow={setFlow} symptoms={symptoms}/>}
+        </div>
+      );
+    }
+
+    function BodyTab({health,updateHealth}) {
+      const [mealOpen,setMealOpen] = useState(false);
+      const meals = health.meals||{breakfast:"",lunch:"",dinner:"",snacks:""};
+      const updateMeal = (k,v) => updateHealth("meals",{...meals,[k]:v});
+      const WORKOUTS = ["Walk","Run","Yoga","Gym","Swim","Cycle","Stretch","Other"];
+      const workout = health.workout||[];
+      const toggleWo = (w) => updateHealth("workout",workout.includes(w)?workout.filter(x=>x!==w):[...workout,w]);
+
+      return (
+        <div style={S.col}>
+          <Card title={"Water  ·  "+(health.water||0)+"/"+WATER_GOAL} compact>
+            <div style={{display:"flex",gap:2,flexWrap:"wrap"}}>
+              {Array.from({length:WATER_GOAL}).map((_,i)=>(
+                <button key={i} onClick={()=>updateHealth("water",i<(health.water||0)?i:i+1)} style={{fontSize:22,background:"none",border:"none",cursor:"pointer",opacity:i<(health.water||0)?1:0.2,padding:"2px"}}>💧</button>
+              ))}
+            </div>
+          </Card>
+
+          <Card compact>
+            <button onClick={()=>setMealOpen(o=>!o)} style={{background:"none",border:"none",cursor:"pointer",width:"100%",textAlign:"left",display:"flex",justifyContent:"space-between",padding:0,fontFamily:"inherit"}}>
+              <span style={{fontSize:13,fontWeight:600,color:"#6b4c3b"}}>Meals</span>
+              <span style={{fontSize:12,color:"#c4956a"}}>{mealOpen?"▲":"▼"}</span>
+            </button>
+            {mealOpen && (
+              <div style={{marginTop:10}}>
+                {["breakfast","lunch","dinner","snacks"].map(k=>(
+                  <div key={k} style={{marginBottom:8}}>
+                    <label style={S.label}>{k}</label>
+                    <input value={meals[k]} onChange={e=>updateMeal(k,e.target.value)} placeholder={"What did you have for "+k+"?"} style={S.input}/>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+
+          <Card title="Workout" compact>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {WORKOUTS.map(w=>(
+                <button key={w} onClick={()=>toggleWo(w)} style={{...S.pill,...(workout.includes(w)?S.pillActive:{})}}>{w}</button>
+              ))}
+            </div>
+          </Card>
+
+          <Card title="Sleep" compact>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div>
+                <label style={S.label}>Hours</label>
+                <input type="number" min="0" max="24" step="0.5" value={health.sleep?.hours||""} onChange={e=>updateHealth("sleep",{...(health.sleep||{}),hours:e.target.value})} placeholder="e.g. 7.5" style={S.input}/>
+              </div>
+              <div>
+                <label style={S.label}>Quality</label>
+                <div style={{display:"flex",gap:5}}>
+                  {["😴","😐","😊"].map((e,i)=>{
+                    const q=["Poor","Okay","Good"][i];
+                    return <button key={q} onClick={()=>updateHealth("sleep",{...(health.sleep||{}),quality:q})} style={{...S.pill,flex:1,textAlign:"center",...(health.sleep?.quality===q?S.pillActive:{})}}>{e}</button>;
+                  })}
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          <Card title="Steps" compact>
+            <input type="number" min="0" value={health.steps||""} onChange={e=>updateHealth("steps",e.target.value)} placeholder="e.g. 8500" style={S.input}/>
+            {health.steps>0 && (
+              <div style={{marginTop:8}}>
+                <div style={S.progressBar}><div style={{...S.progressFill,width:Math.min(100,Math.round(health.steps/10000*100))+"%"}}/></div>
+                <div style={{fontSize:11,color:"#a09080",textAlign:"right"}}>{Math.round(health.steps/10000*100)}% of 10k goal</div>
+              </div>
+            )}
+          </Card>
+        </div>
+      );
+    }
+
+    function SkincareTab({skincare,steps,toggle}) {
+      const [part,setPart] = useState("am");
+      const wk = weekKey();
+      const stepList = steps[part]||[];
+      return (
+        <div style={S.col}>
+          <div style={S.subNav}>
+            <button onClick={()=>setPart("am")} style={{...S.subTab,...(part==="am"?S.subTabActive:{})}}>AM</button>
+            <button onClick={()=>setPart("pm")} style={{...S.subTab,...(part==="pm"?S.subTabActive:{})}}>PM</button>
+          </div>
+          <Card compact>
+            <div style={{display:"grid",gridTemplateColumns:"auto "+DAYS_SHORT.map(()=>"1fr").join(" "),gap:2,alignItems:"center"}}>
+              <div/>
+              {DAYS_SHORT.map(d=><div key={d} style={{fontSize:9,color:"#a09080",textAlign:"center",fontWeight:700,padding:"3px 0"}}>{d}</div>)}
+              {stepList.map(step=>{
+                const row=skincare[wk]?.[part]?.[step]||{};
+                const done=DAYS_SHORT.filter(d=>row[d]).length;
+                return [
+                  <div key={step+"l"} style={{fontSize:11,color:"#6b4c3b",paddingRight:6,whiteSpace:"nowrap"}}>{step} <span style={{fontSize:9,color:done===7?"#7dab87":"#c4956a"}}>{done}/7</span></div>,
+                  ...DAYS_SHORT.map((d,di)=>(
+                    <button key={d} onClick={()=>toggle(part,step,di)} style={{...S.dot,...(row[d]?S.dotDone:{}),margin:"0 auto"}}>✓</button>
+                  ))
+                ];
+              })}
+            </div>
+          </Card>
+        </div>
+      );
+    }
+
+    function CycleTab({period,toggleSymptom,setFlow,symptoms}) {
+      const [logDate,setLogDate] = useState(today());
+      const dayD = period[logDate]||{};
+      const isToday = logDate===today();
+      const [calDate,setCalDate] = useState(new Date());
+      const yr=calDate.getFullYear(), mo=calDate.getMonth();
+      const daysInMonth=new Date(yr,mo+1,0).getDate();
+      const firstOffset=(new Date(yr,mo,1).getDay()+6)%7;
+      const dkCal = (d) => yr+"-"+String(mo+1).padStart(2,"0")+"-"+String(d).padStart(2,"0");
+      const prevMo = () => { const d=new Date(calDate); d.setMonth(d.getMonth()-1); setCalDate(d); };
+      const nextMo = () => { const d=new Date(calDate); d.setMonth(d.getMonth()+1); if(d<=new Date()) setCalDate(d); };
+      const fmtLogDate = (ds) => { if(ds===today()) return "Today"; return new Date(ds+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}); };
+
+      return (
+        <div style={S.col}>
+          <Card title={calDate.toLocaleDateString("en-US",{month:"long",year:"numeric"})} compact>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+              <button onClick={prevMo} style={S.arrowBtn}>{"<"}</button>
+              <span style={{fontSize:11,color:"#a09080"}}>Tap a day to log</span>
+              <button onClick={nextMo} style={S.arrowBtn}>{">"}</button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:4}}>
+              {DAYS_SHORT.map(d=><div key={d} style={{textAlign:"center",fontSize:9,color:"#a09080",fontWeight:700}}>{d}</div>)}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2}}>
+              {Array.from({length:firstOffset}).map((_,i)=><div key={"e"+i}/>)}
+              {Array.from({length:daysInMonth}).map((_,i)=>{
+                const day=i+1, ds=dkCal(day);
+                const isFuture=ds>today(), isTod=ds===today(), isSel=ds===logDate;
+                const hasFlow=!!(period[ds]?.flow);
+                return (
+                  <button key={day} onClick={()=>!isFuture&&setLogDate(ds)} disabled={isFuture}
+                    style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"3px 1px",borderRadius:7,border:"none",cursor:isFuture?"default":"pointer",background:isSel?"#6b4c3b":hasFlow?"#f5dada":"transparent",outline:isTod?"2px solid #c4956a":"none",outlineOffset:"-2px",opacity:isFuture?0.25:1,minHeight:30}}>
+                    <span style={{fontSize:11,color:isSel?"#fff":isTod?"#b07d5a":"#4a3728",fontWeight:isTod||isSel?700:400}}>{day}</span>
+                    {hasFlow && <div style={{width:4,height:4,borderRadius:"50%",background:isSel?"rgba(255,255,255,0.8)":"#c47a7a",marginTop:1}}/>}
+                  </button>
+                );
+              })}
+            </div>
+          </Card>
+
+          <Card title={"Log  ·  "+fmtLogDate(logDate)} compact>
+            {!isToday && (
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,padding:"6px 10px",background:"#fdf5ed",borderRadius:8}}>
+                <span style={{fontSize:12,color:"#8a7060"}}>Logging past day</span>
+                <button onClick={()=>setLogDate(today())} style={{...S.pill,fontSize:11,padding:"3px 10px"}}>Back to today</button>
+              </div>
+            )}
+            <div style={{marginBottom:12}}>
+              <label style={S.label}>Flow {dayD.flow&&<span style={{color:"#c47a7a",fontSize:10}}>· {dayD.flow}</span>}</label>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {FLOW_LEVELS.map(f=><button key={f} onClick={()=>setFlow(f,logDate)} style={{...S.pill,...(dayD.flow===f?{...S.pillActive,background:"#c47a7a",borderColor:"#c47a7a"}:{})}}>{f}</button>)}
+              </div>
+            </div>
+            <div>
+              <label style={S.label}>Symptoms</label>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                {symptoms.map(s=>{
+                  const active=(dayD.symptoms||[]).includes(s);
+                  return <button key={s} onClick={()=>toggleSymptom(s,logDate)} style={{...S.pill,...(active?S.pillActive:{})}}>{s}</button>;
+                })}
+              </div>
+            </div>
+          </Card>
+        </div>
+      );
+    }
+
+    function HomeTab({cleaning,toggle,dailyTasks,weeklyTasks,monthlyTasks}) {
+      const dayOfWeek = new Date().toLocaleDateString("en-US",{weekday:"long"}).slice(0,3);
+      const weeklyForToday = weeklyTasks[dayOfWeek]||[];
+
+      return (
+        <div style={S.col}>
+          <Card title="Daily chores" compact>
+            {dailyTasks.map((t,i)=>{
+              const done=!!cleaning["daily:"+t+":"+today()];
+              return (
+                <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:i<dailyTasks.length-1?"1px solid #f7f3ee":"none"}}>
+                  <button onClick={()=>toggle("daily",t)} style={{...S.check,...(done?S.checkDone:{})}}>✓</button>
+                  <span style={{fontSize:13,flex:1,textDecoration:done?"line-through":"none",color:done?"#b0a090":"#4a3728"}}>{t}</span>
+                </div>
+              );
+            })}
+          </Card>
+
+          {weeklyForToday.length>0 && (
+            <Card title={"Today's weekly  ·  "+dayOfWeek} compact>
+              {weeklyForToday.map((t,i)=>{
+                const done=!!cleaning["weekly:"+t+":"+today()];
+                return (
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:i<weeklyForToday.length-1?"1px solid #f7f3ee":"none"}}>
+                    <button onClick={()=>toggle("weekly",t)} style={{...S.check,...(done?S.checkDone:{})}}>✓</button>
+                    <span style={{fontSize:13,flex:1,textDecoration:done?"line-through":"none",color:done?"#b0a090":"#4a3728"}}>{t}</span>
+                  </div>
+                );
+              })}
+            </Card>
+          )}
+
+          <Card title={"Monthly  ·  "+MONTHS[new Date().getMonth()]} compact>
+            {monthlyTasks.map((t,i)=>{
+              const done=!!cleaning["monthly:"+t+":"+monthKey()];
+              return (
+                <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:i<monthlyTasks.length-1?"1px solid #f7f3ee":"none"}}>
+                  <button onClick={()=>toggle("monthly",t)} style={{...S.check,...(done?S.checkDone:{})}}>✓</button>
+                  <span style={{fontSize:13,flex:1,textDecoration:done?"line-through":"none",color:done?"#b0a090":"#4a3728"}}>{t}</span>
+                </div>
+              );
+            })}
+          </Card>
+        </div>
+      );
+    }
+
+    function CalendarTab({journal,habits,health,moodLog,period}) {
+      const now = new Date();
+      const [yr,setYr]   = useState(now.getFullYear());
+      const [mo,setMo]   = useState(now.getMonth());
+      const [sel,setSel] = useState(null);
+      const daysInMonth = new Date(yr,mo+1,0).getDate();
+      const firstOffset = (new Date(yr,mo,1).getDay()+6)%7;
+      const dk = (d) => yr+"-"+String(mo+1).padStart(2,"0")+"-"+String(d).padStart(2,"0");
+      const prevMo = () => { if(mo===0){setYr(y=>y-1);setMo(11);}else setMo(m=>m-1); setSel(null); };
+      const nextMo = () => {
+        const nm=mo===11?0:mo+1, ny=mo===11?yr+1:yr;
+        if(ny>now.getFullYear()||(ny===now.getFullYear()&&nm>now.getMonth())) return;
+        setMo(nm); if(mo===11) setYr(y=>y+1); setSel(null);
+      };
+
+      const score = (ds) => {
+        let pts=0,tot=0;
+        if(moodLog[ds]?.mood){ tot+=2; const mi=MOODS.findIndex(m=>m.label===moodLog[ds].mood); pts+=mi<=1?2:mi===2?1:0; }
+        if(habits.length>0){ tot+=1; const done=habits.filter(h=>h.completions[ds]).length; pts+=done/habits.length; }
+        if(journal[ds]&&Object.values(journal[ds]).some(v=>v)){ tot+=1; pts+=1; }
+        return tot>0?pts/tot:null;
+      };
+      const dotColor = (ds) => { const s=score(ds); if(s===null) return null; if(s>=0.7) return "#7dab87"; if(s>=0.35) return "#c4956a"; return "#d4a0a0"; };
+
+      const selData = sel ? {
+        mood: moodLog[sel], note: journal[sel],
+        hab: habits.filter(h=>h.completions[sel]),
+        water: health[sel]?.water||0,
+        flow: period[sel]?.flow,
+        symptoms: period[sel]?.symptoms||[],
+      } : null;
+
+      return (
+        <div style={S.col}>
+          <Card compact>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+              <button onClick={prevMo} style={S.arrowBtn}>{"<"}</button>
+              <span style={{fontSize:14,fontWeight:600,color:"#6b4c3b"}}>{MONTHS[mo]} {yr}</span>
+              <button onClick={nextMo} style={S.arrowBtn}>{">"}</button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:6}}>
+              {DAYS_SHORT.map(d=><div key={d} style={{textAlign:"center",fontSize:9,color:"#a09080",fontWeight:700,padding:"3px 0"}}>{d}</div>)}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
+              {Array.from({length:firstOffset}).map((_,i)=><div key={"e"+i}/>)}
+              {Array.from({length:daysInMonth}).map((_,i)=>{
+                const day=i+1, ds=dk(day), isFuture=ds>today(), isTod=ds===today(), isSel=ds===sel;
+                const dc=dotColor(ds);
+                return (
+                  <button key={day} onClick={()=>!isFuture&&setSel(isSel?null:ds)} disabled={isFuture}
+                    style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"4px 2px",borderRadius:8,border:"none",cursor:isFuture?"default":"pointer",background:isSel?"#f0e8df":"transparent",opacity:isFuture?0.25:1,outline:isTod?"2px solid #c4956a":"none",outlineOffset:"-2px"}}>
+                    <span style={{fontSize:11,color:isTod?"#c4956a":"#4a3728",fontWeight:isTod?700:400}}>{day}</span>
+                    {dc && <div style={{width:5,height:5,borderRadius:"50%",background:dc,marginTop:2}}/>}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{display:"flex",gap:10,marginTop:8,justifyContent:"center"}}>
+              {[["#7dab87","Great"],["#c4956a","Okay"],["#d4a0a0","Low"]].map(([c,l])=>(
+                <div key={l} style={{display:"flex",alignItems:"center",gap:3}}>
+                  <div style={{width:7,height:7,borderRadius:"50%",background:c}}/><span style={{fontSize:9,color:"#a09080"}}>{l}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {selData && (
+            <Card title={new Date(sel+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})} compact>
+              {selData.mood?.mood && <div style={{marginBottom:8}}><span style={{fontSize:11,color:"#a09080"}}>Mood: </span><span style={{fontSize:13}}>{MOODS.find(m=>m.label===selData.mood.mood)?.emoji} {selData.mood.mood}</span></div>}
+              {selData.mood?.note && <div style={{fontSize:12,color:"#8a7060",fontStyle:"italic",marginBottom:8}}>"{selData.mood.note}"</div>}
+              {selData.water>0 && <div style={{marginBottom:6}}><span style={{fontSize:11,color:"#a09080"}}>Water: </span><span style={{fontSize:12}}>{"💧".repeat(selData.water)}</span></div>}
+              {selData.hab.length>0 && <div style={{marginBottom:6}}><span style={{fontSize:11,color:"#a09080"}}>Habits: </span><span style={{fontSize:12}}>{selData.hab.map(h=>h.name).join(", ")}</span></div>}
+              {selData.flow && <div style={{marginBottom:6}}><span style={{fontSize:11,color:"#a09080"}}>Flow: </span><span style={{fontSize:12,color:"#c47a7a"}}>{selData.flow}</span></div>}
+              {selData.symptoms.length>0 && <div style={{marginBottom:6}}><span style={{fontSize:11,color:"#a09080"}}>Symptoms: </span><span style={{fontSize:12}}>{selData.symptoms.join(", ")}</span></div>}
+              {selData.note?.feel && <div style={{marginBottom:6}}><span style={{fontSize:11,color:"#a09080"}}>How I felt: </span><span style={{fontSize:12}}>{selData.note.feel}</span></div>}
+              {[selData.note?.g0,selData.note?.g1,selData.note?.g2].filter(Boolean).length>0 && (
+                <div><span style={{fontSize:11,color:"#a09080"}}>Grateful for: </span><span style={{fontSize:12}}>{[selData.note?.g0,selData.note?.g1,selData.note?.g2].filter(Boolean).join(", ")}</span></div>
+              )}
+            </Card>
+          )}
+        </div>
+      );
+    }
+
+    function SettingsTab({skincareSteps,updateSkincareSteps,symptoms,updateSymptoms,dailyTasks,updateDailyTasks,weeklyTasks,updateWeeklyTasks,monthlyTasks,updateMonthlyTasks,allData,restoreData,showToast}) {
+      const [sub,setSub] = useState("tasks");
+      const [dayOfWeek,setDayOfWeek] = useState("Mon");
+      const WEEK_DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+
+      const exportData = () => {
+        const blob = new Blob([JSON.stringify(allData(),null,2)],{type:"application/json"});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a"); a.href=url; a.download="daily-life-backup.json"; a.click();
+        URL.revokeObjectURL(url); showToast("Backup downloaded ✅");
+      };
+      const importData = (e) => {
+        const file=e.target.files[0]; if(!file) return;
+        const reader=new FileReader();
+        reader.onload=(ev)=>{ try{ restoreData(JSON.parse(ev.target.result)); }catch{ showToast("Invalid file ❌"); } };
+        reader.readAsText(file);
+      };
+
+      return (
+        <div style={S.col}>
+          <div style={S.subNav}>
+            {["tasks","skincare","cycle","backup"].map(s=>(
+              <button key={s} onClick={()=>setSub(s)} style={{...S.subTab,...(sub===s?S.subTabActive:{}),fontSize:11}}>
+                {s==="tasks"?"🏠 Tasks":s==="skincare"?"✨ Skin":s==="cycle"?"🌸 Cycle":"💾 Backup"}
+              </button>
+            ))}
+          </div>
+
+          {sub==="tasks" && (
+            <div style={S.col}>
+              <EditableList title="Daily tasks" items={dailyTasks} onUpdate={updateDailyTasks} placeholder="Add daily task..."/>
+              <Card title="Weekly tasks" compact>
+                <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:10}}>
+                  {WEEK_DAYS.map(d=>(
+                    <button key={d} onClick={()=>setDayOfWeek(d)} style={{...S.pill,...(dayOfWeek===d?S.pillActive:{})}}>{d}</button>
+                  ))}
+                </div>
+                <InlineList items={weeklyTasks[dayOfWeek]||[]} onUpdate={(n)=>updateWeeklyTasks({...weeklyTasks,[dayOfWeek]:n})} placeholder={"Add task for "+dayOfWeek+"..."}/>
+              </Card>
+              <EditableList title="Monthly tasks" items={monthlyTasks} onUpdate={updateMonthlyTasks} placeholder="Add monthly task..."/>
+            </div>
+          )}
+
+          {sub==="skincare" && (
+            <div style={S.col}>
+              <EditableList title="AM routine" items={skincareSteps.am||[]} onUpdate={(n)=>updateSkincareSteps({...skincareSteps,am:n})} placeholder="Add AM step..."/>
+              <EditableList title="PM routine" items={skincareSteps.pm||[]} onUpdate={(n)=>updateSkincareSteps({...skincareSteps,pm:n})} placeholder="Add PM step..."/>
+            </div>
+          )}
+
+          {sub==="cycle" && (
+            <EditableList title="Cycle symptoms" items={symptoms} onUpdate={updateSymptoms} placeholder="Add symptom..."/>
+          )}
+
+          {sub==="backup" && (
+            <Card title="Backup & restore" compact>
+              <p style={{fontSize:12,color:"#8a7060",marginBottom:14,margin:"0 0 14px"}}>Export your data as JSON or restore from a previous backup.</p>
+              <Btn full onClick={exportData}>⬇ Export backup</Btn>
+              <div style={{marginTop:10}}>
+                <label style={{...S.btn,display:"block",textAlign:"center",cursor:"pointer",boxSizing:"border-box",width:"100%"}}>
+                  ⬆ Import backup
+                  <input type="file" accept=".json" onChange={importData} style={{display:"none"}}/>
+                </label>
+              </div>
+            </Card>
+          )}
+        </div>
+      );
+    }
+
+    function EditableList({title,items,onUpdate,placeholder}) {
+      const [input,setInput]     = useState("");
+      const [editing,setEditing] = useState(null);
+      const [editVal,setEditVal] = useState("");
+      const add    = () => { if(!input.trim()) return; onUpdate([...items,input.trim()]); setInput(""); };
+      const remove = (i) => onUpdate(items.filter((_,j)=>j!==i));
+      const saveEdit = (i) => { onUpdate(items.map((x,j)=>j===i?editVal:x)); setEditing(null); };
+      const move   = (i,dir) => { const a=[...items]; [a[i],a[i+dir]]=[a[i+dir],a[i]]; onUpdate(a); };
+      return (
+        <Card title={title} compact>
+          {items.map((item,i)=>(
+            editing===i ? (
+              <div key={i} style={{display:"flex",gap:6,padding:"5px 0",borderBottom:"1px solid #f7f3ee"}}>
+                <input value={editVal} onChange={e=>setEditVal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&saveEdit(i)} style={{...S.input,flex:1}} autoFocus/>
+                <Btn onClick={()=>saveEdit(i)}>Save</Btn>
+                <button onClick={()=>setEditing(null)} style={S.ghostBtn}>✕</button>
+              </div>
+            ) : (
+              <div key={i} style={{display:"flex",alignItems:"center",gap:6,borderBottom:"1px solid #f7f3ee",padding:"5px 0"}}>
+                <div style={{display:"flex",flexDirection:"column"}}>
+                  <button onClick={()=>i>0&&move(i,-1)} style={{...S.iconBtn,fontSize:9,padding:"1px 3px",opacity:i===0?0.3:1}}>▲</button>
+                  <button onClick={()=>i<items.length-1&&move(i,1)} style={{...S.iconBtn,fontSize:9,padding:"1px 3px",opacity:i===items.length-1?0.3:1}}>▼</button>
+                </div>
+                <span style={{flex:1,fontSize:13}}>{item}</span>
+                <button onClick={()=>{setEditing(i);setEditVal(item);}} style={S.iconBtn}>✏️</button>
+                <button onClick={()=>remove(i)} style={S.iconBtn}>🗑️</button>
+              </div>
+            )
+          ))}
+          <div style={{display:"flex",gap:6,marginTop:8}}>
+            <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder={placeholder} style={S.input}/>
+            <Btn onClick={add}>Add</Btn>
+          </div>
+        </Card>
+      );
+    }
+
+    function InlineList({items,onUpdate,placeholder}) {
+      const [input,setInput] = useState("");
+      const add = () => { if(!input.trim()) return; onUpdate([...items,input.trim()]); setInput(""); };
+      return (
+        <div>
+          {items.map((item,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+              <span style={{flex:1,fontSize:12}}>{item}</span>
+              <button onClick={()=>onUpdate(items.filter((_,j)=>j!==i))} style={{...S.iconBtn,fontSize:11}}>🗑️</button>
+            </div>
+          ))}
+          <div style={{display:"flex",gap:6,marginTop:4}}>
+            <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder={placeholder} style={{...S.input,fontSize:12,padding:"5px 9px"}}/>
+            <Btn onClick={add} small>+</Btn>
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
