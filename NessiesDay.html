@@ -1,0 +1,1376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Nessie's Day" />
+  <title>Nessie's Day</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: #fdf9f5; }
+    body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%; }
+    input, textarea, button, select { font-family: inherit; }
+    .nav-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+    @keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes pop { 0%{transform:scale(0.85);opacity:0} 60%{transform:scale(1.06)} 100%{transform:scale(1);opacity:1} }
+    @keyframes shimmer { 0%{background-position:200% center} 100%{background-position:-200% center} }
+    .fade-up { animation: fadeUp 0.35s ease both; }
+    .pop { animation: pop 0.4s cubic-bezier(.34,1.56,.64,1) both; }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    // ── STORAGE ──────────────────────────────────────────────────────────────
+    const save = (k, v) => { try { localStorage.setItem("nd2_" + k, JSON.stringify(v)); } catch(e) { if(e.name==="QuotaExceededError") alert("Storage full! Export a backup."); } };
+    const load = (k, fb) => { try { const v = localStorage.getItem("nd2_" + k); return v ? JSON.parse(v) : fb; } catch { return fb; } };
+
+    // ── HELPERS ──────────────────────────────────────────────────────────────
+    const toKey   = d => d.toISOString().slice(0,10);
+    const today   = () => toKey(new Date());
+    const dayName = () => new Date().toLocaleDateString("en-GB",{weekday:"long"});
+    const fullDate= () => new Date().toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"});
+    const weekKey = () => { const d=new Date(),day=d.getDay(),mon=new Date(d); mon.setDate(d.getDate()-(day===0?6:day-1)); return toKey(mon); };
+    const monthKey= () => new Date().toISOString().slice(0,7);
+    const getHour = () => new Date().getHours();
+
+    const DAYS_SHORT = ["Mo","Tu","We","Th","Fr","Sa","Su"];
+    const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+    const MOODS = [
+      { emoji:"🌟", label:"Amazing", color:"#e8a838" },
+      { emoji:"😊", label:"Good",    color:"#5aab7f" },
+      { emoji:"😐", label:"Okay",    color:"#9b8ea8" },
+      { emoji:"😔", label:"Low",     color:"#c08070" },
+      { emoji:"🌧", label:"Rough",   color:"#7898b8" },
+    ];
+
+    const WATER_GOAL = 8;
+
+    const DEFAULT_DAILY  = ["Make bed","Wipe counters","Dishes","Quick tidy"];
+    const DEFAULT_WEEKLY = { Mon:["Vacuum"], Tue:["Bathroom"], Wed:["Mop floors"], Thu:["Dust"], Fri:["Laundry"], Sat:["Kitchen deep clean"], Sun:["Rest / catch up"] };
+    const DEFAULT_MONTHLY= ["Clean fridge","Wash windows","Deep clean oven","Descale kettle"];
+    const DEFAULT_AM     = ["Cleanser","Toner","Vitamin C","Moisturiser","SPF"];
+    const DEFAULT_PM     = ["Oil cleanser","Cleanser","Toner","Serum","Moisturiser","Eye cream"];
+    const DEFAULT_SYMPTOMS=["Cramps","Spotting","Tender breasts","Tired","Fatigue","Acne","Headache","Bloating","Mood swings","Back pain","Nausea"];
+    const FLOW_LEVELS    = ["Spotting","Light","Medium","Heavy"];
+    const WORKOUTS       = ["Walk","Run","Yoga","Gym","Swim","Cycle","Stretch","Other"];
+
+    const MILESTONES = [
+      { id:"first",  emoji:"🌱", label:"First habit done!",    check:(h)=>h.some(x=>Object.keys(x.completions).length>0) },
+      { id:"s3",     emoji:"✨", label:"3-day streak",          check:(h)=>h.some(x=>x.streak>=3) },
+      { id:"s7",     emoji:"💜", label:"7-day streak",          check:(h)=>h.some(x=>x.streak>=7) },
+      { id:"s30",    emoji:"🏆", label:"30-day streak",         check:(h)=>h.some(x=>x.streak>=30) },
+      { id:"allday", emoji:"🎯", label:"All habits today",      check:(h,d)=>h.length>0&&h.every(x=>x.completions[d]) },
+    ];
+
+    const TABS = [
+      { id:"today",   label:"Today",   icon:"☀️" },
+      { id:"routine", label:"Routine", icon:"🗓" },
+      { id:"track",   label:"Track",   icon:"💜" },
+      { id:"review",  label:"Review",  icon:"📅" },
+      { id:"settings",label:"More",    icon:"⚙️" },
+    ];
+
+    // ── WORK SCHEDULE ────────────────────────────────────────────────────────
+    const DEFAULT_SCHEDULE = {
+      workStart:   "08:50",
+      workEnd:     "18:45",
+      sunStart:    "13:20",
+      sunEnd:      "18:10",
+      commuteMins: 105,
+      dayOverrides: {},  // { "2026-04-07": "off" | "work" }
+    };
+
+    const parseMins = t => { const [h,m] = t.split(":").map(Number); return h*60+(m||0); };
+
+    const getDayType = (sched) => {
+      const sc = sched || DEFAULT_SCHEDULE;
+      const d = new Date(), dow = d.getDay(), h = d.getHours(), m = d.getMinutes();
+      const mins = h*60+m;
+      const dk = toKey(d);
+      const override = (sc.dayOverrides||{})[dk];
+
+      // Day off override
+      if (override === "off") {
+        if (mins < 8*60)   return { phase:"night",   label:"Rest time" };
+        if (mins < 22*60)  return { phase:"morning", label:"Day off ✦" };
+        return { phase:"night", label:"Rest time" };
+      }
+
+      const isSun = dow === 0;
+      const useAlt = isSun && override !== "work";
+      const startStr = useAlt ? sc.sunStart  : sc.workStart;
+      const endStr   = useAlt ? sc.sunEnd    : sc.workEnd;
+      const startM   = parseMins(startStr);
+      const endM     = parseMins(endStr);
+      const commute  = sc.commuteMins || 105;
+      const morningStart = startM - commute;
+      const eveningEnd   = endM + commute;
+
+      if (mins < morningStart - 30)  return { phase:"night",        label:"Rest time" };
+      if (mins < morningStart)        return { phase:"morning",      label:"Good morning ✦" };
+      if (mins < startM)              return { phase:"commute-to",   label:"Commuting to work" };
+      if (mins < endM)                return { phase:"work",         label:"At work" };
+      if (mins < eveningEnd)          return { phase:"commute-home", label:"Commuting home" };
+      if (mins < 23*60)               return { phase:"evening",      label:"Evening wind-down" };
+      return { phase:"night", label:"Rest time" };
+    };
+
+    // ── DESIGN TOKENS ────────────────────────────────────────────────────────
+    const C = {
+      bg:      "#fdf9f5",
+      bg2:     "#f7f0e8",
+      bg3:     "#efe4d6",
+      card:    "#ffffff",
+      ink:     "#2a1f1a",
+      ink2:    "#7a6558",
+      ink3:    "#b0a096",
+      rose:    "#c4756a",
+      roseSoft:"#e8c4be",
+      gold:    "#c49a4a",
+      goldSoft:"#f0ddb0",
+      sage:    "#6a9a78",
+      sageSoft:"#c4ddc8",
+      border:  "rgba(180,140,110,0.18)",
+      border2: "rgba(180,140,110,0.10)",
+    };
+
+    const S = {
+      root:     { minHeight:"100vh", background:C.bg, fontFamily:"'DM Sans', system-ui, sans-serif", color:C.ink, maxWidth:480, margin:"0 auto", paddingBottom:80 },
+      header:   { background:C.bg, borderBottom:`1px solid ${C.border}`, padding:"14px 18px 10px", textAlign:"center", position:"sticky", top:0, zIndex:10 },
+      title:    { fontSize:26, fontStyle:"italic", fontWeight:400, color:C.ink, fontFamily:"'Cormorant Garamond', Georgia, serif", letterSpacing:"0.01em" },
+      dateSm:   { fontSize:10, color:C.ink3, letterSpacing:"0.12em", textTransform:"uppercase", fontWeight:500 },
+      nav:      { position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, background:C.card, borderTop:`1px solid ${C.border}`, display:"flex", zIndex:20, boxShadow:"0 -2px 16px rgba(100,60,20,0.07)" },
+      tabBtn:   { flex:1, display:"flex", flexDirection:"column", alignItems:"center", padding:"8px 4px 6px", background:"none", border:"none", cursor:"pointer", color:C.ink3, fontFamily:"inherit", gap:2 },
+      tabActive:{ color:C.rose, borderTop:`2px solid ${C.rose}` },
+      main:     { padding:"12px 14px 16px" },
+      col:      { display:"flex", flexDirection:"column", gap:10 },
+      card:     { background:C.card, borderRadius:14, padding:"14px 16px", border:`1px solid ${C.border2}`, boxShadow:"0 1px 8px rgba(100,60,20,0.05)" },
+      cardHead: { marginBottom:10, paddingBottom:8, borderBottom:`1px solid ${C.border2}`, display:"flex", alignItems:"center", justifyContent:"space-between" },
+      cardTitle:{ fontSize:14, fontStyle:"italic", fontWeight:400, color:C.ink, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:16 },
+      input:    { flex:1, background:C.bg2, border:`1.5px solid ${C.border}`, borderRadius:9, padding:"9px 12px", fontFamily:"inherit", fontSize:14, color:C.ink, outline:"none", width:"100%" },
+      textarea: { background:C.bg2, border:`1.5px solid ${C.border}`, borderRadius:9, padding:"9px 12px", fontFamily:"inherit", fontSize:14, color:C.ink, resize:"vertical", outline:"none", width:"100%" },
+      label:    { fontSize:10, color:C.ink3, letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:5, fontWeight:500, display:"block" },
+      btn:      { background:C.rose, color:"#fff", border:"none", borderRadius:9, padding:"9px 18px", fontFamily:"inherit", fontSize:13, cursor:"pointer", fontWeight:500 },
+      btnOut:   { background:"none", color:C.rose, border:`1.5px solid ${C.roseSoft}`, borderRadius:9, padding:"8px 16px", fontFamily:"inherit", fontSize:13, cursor:"pointer" },
+      ghostBtn: { background:"none", border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 12px", fontFamily:"inherit", fontSize:12, cursor:"pointer", color:C.ink2 },
+      iconBtn:  { background:"none", border:"none", cursor:"pointer", fontSize:13, padding:"3px 5px", color:C.ink3, fontFamily:"inherit" },
+      pill:     { background:C.bg2, border:`1.5px solid ${C.border}`, borderRadius:20, padding:"5px 13px", fontSize:12, cursor:"pointer", fontFamily:"inherit", color:C.ink2 },
+      pillOn:   { background:C.rose, color:"#fff", borderColor:C.rose },
+      chip:     { background:C.bg3, borderRadius:20, padding:"4px 10px", fontSize:12, display:"inline-flex", alignItems:"center", gap:4, color:C.ink2 },
+      chipX:    { background:"none", border:"none", cursor:"pointer", color:C.ink3, fontSize:13, padding:0, lineHeight:1 },
+      check:    { width:24, height:24, borderRadius:"50%", border:`2px solid ${C.border}`, background:"none", cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, color:"transparent" },
+      checkOn:  { background:C.rose, borderColor:C.rose, color:"#fff" },
+      bar:      { height:4, background:C.bg3, borderRadius:99, overflow:"hidden" },
+      barFill:  { height:"100%", background:`linear-gradient(90deg, ${C.rose}, ${C.gold})`, borderRadius:99, transition:"width 0.4s ease" },
+      dot:      { width:22, height:22, borderRadius:"50%", border:`1.5px solid ${C.border}`, background:"none", cursor:"pointer", fontSize:9, color:"transparent", display:"inline-flex", alignItems:"center", justifyContent:"center" },
+      dotOn:    { background:C.rose, borderColor:C.rose, color:"#fff" },
+      arrowBtn: { background:"none", border:`1.5px solid ${C.border}`, borderRadius:7, padding:"4px 13px", fontSize:16, cursor:"pointer", color:C.ink2 },
+      subNav:   { display:"flex", background:C.bg2, borderRadius:10, padding:3, gap:3 },
+      subTab:   { flex:1, padding:"6px 4px", background:"none", border:"none", cursor:"pointer", borderRadius:7, fontSize:12, color:C.ink3, fontFamily:"inherit" },
+      subTabOn: { background:C.card, color:C.rose, fontWeight:500, boxShadow:"0 1px 4px rgba(100,60,20,0.1)" },
+      empty:    { color:C.ink3, fontSize:13, textAlign:"center", padding:"10px 0", fontStyle:"italic" },
+      streakCard:{ background:C.bg2, borderRadius:10, padding:"9px 11px", textAlign:"center", minWidth:58, border:`1px solid ${C.border2}` },
+    };
+
+    // ── SHARED COMPONENTS ────────────────────────────────────────────────────
+    function Card({ title, children, action }) {
+      return (
+        <div style={S.card}>
+          {title && (
+            <div style={S.cardHead}>
+              <span style={S.cardTitle}>{title}</span>
+              {action}
+            </div>
+          )}
+          {children}
+        </div>
+      );
+    }
+    function Btn({ onClick, children, full, outline, small, style:sx }) {
+      return <button onClick={onClick} style={{ ...(outline?S.btnOut:S.btn), ...(full?{width:"100%",boxSizing:"border-box"}:{}), ...(small?{padding:"5px 11px",fontSize:12}:{}), ...sx }}>{children}</button>;
+    }
+    function ProgressBar({ pct }) {
+      return <div style={S.bar}><div style={{ ...S.barFill, width:pct+"%" }} /></div>;
+    }
+
+    // ── APP ROOT ─────────────────────────────────────────────────────────────
+    function App() {
+      const [tab,       setTab]       = useState("today");
+      const [loaded,    setLoaded]    = useState(false);
+      const [toast,     setToast]     = useState(null);
+      const [celebrate, setCelebrate] = useState(null);
+
+      const [journal,       setJournal]       = useState({});
+      const [habits,        setHabits]        = useState([]);
+      const [moodLog,       setMoodLog]       = useState({});
+      const [badges,        setBadges]        = useState([]);
+      const [health,        setHealth]        = useState({});
+      const [skincare,      setSkincare]      = useState({});
+      const [skincareSteps, setSkincareSteps] = useState({ am:DEFAULT_AM, pm:DEFAULT_PM });
+      const [period,        setPeriod]        = useState({});
+      const [symptoms,      setSymptoms]      = useState(DEFAULT_SYMPTOMS);
+      const [cleaning,      setCleaning]      = useState({});
+      const [dailyTasks,    setDailyTasks]    = useState(DEFAULT_DAILY);
+      const [weeklyTasks,   setWeeklyTasks]   = useState(DEFAULT_WEEKLY);
+      const [monthlyTasks,  setMonthlyTasks]  = useState(DEFAULT_MONTHLY);
+      const [workDays,      setWorkDays]      = useState(load("workDays", ["Mon","Tue","Wed","Thu","Fri"]));
+      const [taskTimes,     setTaskTimes]     = useState({});
+      const [schedule,      setSchedule]      = useState(DEFAULT_SCHEDULE);
+
+      useEffect(() => {
+        const [j,h,ml,bg,he,sk,sks,pe,sym,cl,dt,wt,mt,tt,sc] = [
+          load("journal",{}), load("habits",[]), load("moodLog",{}), load("badges",[]),
+          load("health",{}), load("skincare",{}), load("skincareSteps",{am:DEFAULT_AM,pm:DEFAULT_PM}),
+          load("period",{}), load("symptoms",DEFAULT_SYMPTOMS),
+          load("cleaning",{}), load("dailyTasks",DEFAULT_DAILY),
+          load("weeklyTasks",DEFAULT_WEEKLY), load("monthlyTasks",DEFAULT_MONTHLY),
+          load("taskTimes",{}), load("schedule", DEFAULT_SCHEDULE),
+        ];
+        setJournal(j); setHabits(h); setMoodLog(ml); setBadges(bg);
+        setHealth(he); setSkincare(sk); setSkincareSteps(sks);
+        setPeriod(pe); setSymptoms(sym);
+        setCleaning(cl); setDailyTasks(dt); setWeeklyTasks(wt); setMonthlyTasks(mt);
+        setTaskTimes(tt); setSchedule(sc);
+        setLoaded(true);
+      }, []);
+
+      const showToast = msg => { setToast(msg); setTimeout(()=>setToast(null), 2400); };
+      const showCelebrate = m => { setCelebrate(m); setTimeout(()=>setCelebrate(null),3000); };
+
+      const updateJournal = (field, val) => {
+        const next = { ...journal, [today()]:{ ...(journal[today()]||{}), [field]:val } };
+        setJournal(next); save("journal", next);
+      };
+
+      const calcStreak = c => { let s=0, d=new Date(); while(true){ const k=toKey(d); if(c[k]){s++;d.setDate(d.getDate()-1);}else break; } return s; };
+
+      const checkBadges = (nh, nb) => {
+        const d=today(), earned=[...nb]; let got=null;
+        MILESTONES.forEach(m=>{ if(earned.includes(m.id)) return; if(m.check(nh,d)){ earned.push(m.id); got=m; } });
+        if(got){ setBadges(earned); save("badges",earned); showCelebrate(got); }
+      };
+
+      const toggleHabit = id => {
+        const d=today();
+        const next = habits.map(h=>{ if(h.id!==id) return h; const c={...h.completions,[d]:!h.completions[d]}; return {...h,completions:c,streak:calcStreak(c)}; });
+        setHabits(next); save("habits",next);
+        const h=next.find(x=>x.id===id);
+        if(h&&h.completions[d]){ showToast("✓ "+h.name); checkBadges(next,badges); }
+      };
+      const addHabit    = name => { if(!name.trim()) return; const next=[...habits,{id:Date.now()+"",name:name.trim(),completions:{},streak:0}]; setHabits(next); save("habits",next); };
+      const removeHabit = id => { const next=habits.filter(h=>h.id!==id); setHabits(next); save("habits",next); };
+      const renameHabit = (id,name) => { const next=habits.map(h=>h.id===id?{...h,name}:h); setHabits(next); save("habits",next); };
+
+      const setMood     = mood => { const next={...moodLog,[today()]:{...(moodLog[today()]||{}),mood}}; setMoodLog(next); save("moodLog",next); };
+      const setMoodNote = note => { const next={...moodLog,[today()]:{...(moodLog[today()]||{}),note}}; setMoodLog(next); save("moodLog",next); };
+
+      const updateHealth = (field,val) => { const n={...health,[today()]:{...(health[today()]||{}),[field]:val}}; setHealth(n); save("health",n); };
+
+      const toggleSkincare = (part,step,di) => {
+        const wk=weekKey(), dl=DAYS_SHORT[di], curr=(skincare[wk]&&skincare[wk][part]&&skincare[wk][part][step]&&skincare[wk][part][step][dl])||false;
+        const n={...skincare,[wk]:{...(skincare[wk]||{}),[part]:{...((skincare[wk]||{})[part]||{}),[step]:{...(((skincare[wk]||{})[part]||{})[step]||{}),[dl]:!curr}}}};
+        setSkincare(n); save("skincare",n);
+      };
+
+      const toggleSymptom = (s,date) => { const d=date||today(); const curr=(period[d]&&period[d].symptoms)||[]; const syms=curr.includes(s)?curr.filter(x=>x!==s):[...curr,s]; const n={...period,[d]:{...(period[d]||{}),symptoms:syms}}; setPeriod(n); save("period",n); };
+      const setFlow = (flow,date) => { const d=date||today(); const v=(period[d]&&period[d].flow)===flow?null:flow; const n={...period,[d]:{...(period[d]||{}),flow:v}}; setPeriod(n); save("period",n); };
+
+      const toggleCleaning = (type,name) => { const key=type==="monthly"?monthKey():today(); const fk=type+":"+name+":"+key; const n={...cleaning,[fk]:!cleaning[fk]}; setCleaning(n); save("cleaning",n); };
+
+      const allData = () => ({ journal,habits,health,moodLog,skincare,period,cleaning,skincareSteps,symptoms,dailyTasks,weeklyTasks,monthlyTasks,badges,taskTimes,schedule });
+      const restoreData = data => {
+        setJournal(data.journal||{}); setHabits(data.habits||[]); setHealth(data.health||{});
+        setMoodLog(data.moodLog||{}); setSkincare(data.skincare||{}); setPeriod(data.period||{});
+        setCleaning(data.cleaning||{}); setSkincareSteps(data.skincareSteps||{am:DEFAULT_AM,pm:DEFAULT_PM});
+        setSymptoms(data.symptoms||DEFAULT_SYMPTOMS); setDailyTasks(data.dailyTasks||DEFAULT_DAILY);
+        setWeeklyTasks(data.weeklyTasks||DEFAULT_WEEKLY); setMonthlyTasks(data.monthlyTasks||DEFAULT_MONTHLY);
+        setBadges(data.badges||[]); setTaskTimes(data.taskTimes||{}); setSchedule(data.schedule||DEFAULT_SCHEDULE);
+        for(const[k,v] of Object.entries(data)) save(k,v);
+        showToast("Restored ✅");
+      };
+
+      if(!loaded) return (
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,color:C.ink3,fontFamily:"'Cormorant Garamond',serif",fontSize:18,fontStyle:"italic"}}>
+          Loading...
+        </div>
+      );
+
+      const todayH    = health[today()]||{};
+      const todayMood = moodLog[today()];
+      const todayJ    = journal[today()]||{};
+      const dayType   = getDayType(schedule);
+
+      return (
+        <div style={S.root}>
+          {/* Toast */}
+          <div style={{ position:"fixed", top:66, left:"50%", transform:"translateX(-50%)", background:C.rose, color:"#fff", padding:"8px 22px", borderRadius:40, fontSize:13, zIndex:999, whiteSpace:"nowrap", opacity:toast?1:0, transition:"opacity 0.3s", pointerEvents:"none", fontStyle:"italic", boxShadow:"0 4px 16px rgba(196,117,106,0.3)" }}>
+            {toast}
+          </div>
+
+          {/* Celebrate */}
+          {celebrate && (
+            <div style={{ position:"fixed", inset:0, display:"flex", alignItems:"center", justifyContent:"center", zIndex:200, pointerEvents:"none", background:"rgba(253,249,245,0.85)" }}>
+              <div className="pop" style={{ background:C.card, borderRadius:24, padding:"36px 44px", textAlign:"center", boxShadow:"0 16px 48px rgba(100,60,20,0.15)", border:`1px solid ${C.border}` }}>
+                <div style={{ fontSize:60, marginBottom:10 }}>{celebrate.emoji}</div>
+                <div style={{ fontSize:20, fontFamily:"'Cormorant Garamond',serif", fontStyle:"italic", color:C.ink }}>{celebrate.label}</div>
+                <div style={{ fontSize:12, color:C.ink3, marginTop:4 }}>Badge earned ✦</div>
+              </div>
+            </div>
+          )}
+
+          <header style={S.header}>
+            <p style={S.dateSm}>{dayName()}</p>
+            <h1 style={S.title}>Nessie's Day</h1>
+            <p style={{ ...S.dateSm, marginTop:1, color:C.rose }}>{dayType.label}</p>
+          </header>
+
+          <main style={S.main}>
+            {tab==="today"    && <TodayTab journal={todayJ} update={updateJournal} todayMood={todayMood} setMood={setMood} setMoodNote={setMoodNote} habits={habits} toggleHabit={toggleHabit} addHabit={addHabit} removeHabit={removeHabit} renameHabit={renameHabit} todayHealth={todayH} updateHealth={updateHealth} dayType={dayType} skincare={skincare} skincareSteps={skincareSteps} toggleSkincare={toggleSkincare} cleaning={cleaning} toggleCleaning={toggleCleaning} dailyTasks={dailyTasks} weeklyTasks={weeklyTasks} monthlyTasks={monthlyTasks} period={period} toggleSymptom={toggleSymptom} setFlow={setFlow} symptoms={symptoms} taskTimes={taskTimes} />}
+            {tab==="routine"  && <RoutineTab dayType={dayType} habits={habits} toggleHabit={toggleHabit} cleaning={cleaning} toggleCleaning={toggleCleaning} dailyTasks={dailyTasks} weeklyTasks={weeklyTasks} monthlyTasks={monthlyTasks} todayHealth={todayH} updateHealth={updateHealth} skincare={skincare} skincareSteps={skincareSteps} toggleSkincare={toggleSkincare} />}
+            {tab==="track"    && <TrackTab health={todayH} habits={habits} badges={badges} skincare={skincare} skincareSteps={skincareSteps} cleaning={cleaning} dailyTasks={dailyTasks} weeklyTasks={weeklyTasks} moodLog={moodLog} journal={journal} period={period} />}
+            {tab==="review"   && <ReviewTab journal={journal} habits={habits} health={health} moodLog={moodLog} period={period} badges={badges} />}
+            {tab==="settings" && <SettingsTab skincareSteps={skincareSteps} updateSkincareSteps={n=>{setSkincareSteps(n);save("skincareSteps",n);}} symptoms={symptoms} updateSymptoms={n=>{setSymptoms(n);save("symptoms",n);}} dailyTasks={dailyTasks} updateDailyTasks={n=>{setDailyTasks(n);save("dailyTasks",n);}} weeklyTasks={weeklyTasks} updateWeeklyTasks={n=>{setWeeklyTasks(n);save("weeklyTasks",n);}} monthlyTasks={monthlyTasks} updateMonthlyTasks={n=>{setMonthlyTasks(n);save("monthlyTasks",n);}} taskTimes={taskTimes} updateTaskTimes={n=>{setTaskTimes(n);save("taskTimes",n);}} schedule={schedule} updateSchedule={n=>{setSchedule(n);save("schedule",n);}} allData={allData} restoreData={restoreData} showToast={showToast} />}
+          </main>
+
+          <nav style={S.nav} className="nav-safe">
+            {TABS.map(t=>(
+              <button key={t.id} onClick={()=>setTab(t.id)} style={{ ...S.tabBtn, ...(tab===t.id?S.tabActive:{}) }}>
+                <span style={{fontSize:18}}>{t.icon}</span>
+                <span style={{fontSize:9,fontWeight:500,letterSpacing:"0.03em"}}>{t.label}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
+      );
+    }
+
+    // ── TODAY TAB ─────────────────────────────────────────────────────────────
+    function TodayTab({ journal, update, todayMood, setMood, setMoodNote, habits, toggleHabit, addHabit, removeHabit, renameHabit, todayHealth, updateHealth, dayType, skincare, skincareSteps, toggleSkincare, cleaning, toggleCleaning, dailyTasks, weeklyTasks, monthlyTasks, period, toggleSymptom, setFlow, symptoms, taskTimes }) {
+      const [mode, setMode] = useState("home");
+      const [step, setStep] = useState(0);
+      const [addingHabit, setAddingHabit] = useState(false);
+      const [newHabit, setNewHabit] = useState("");
+      const hour = getHour();
+      const done = habits.filter(h=>h.completions[today()]).length;
+      const todayPeriod = period[today()]||{};
+      const dayOfWeek = new Date().toLocaleDateString("en-US",{weekday:"long"}).slice(0,3);
+      const weeklyForToday = weeklyTasks[dayOfWeek]||[];
+
+      // Skincare today helper — checks today's day-of-week index
+      const todayDayIdx = (new Date().getDay()+6)%7; // Mon=0
+      const skincareAMtoday = (part) => {
+        const wk=weekKey(), wkData=skincare[wk]||{}, partData=wkData[part]||{};
+        const dl=DAYS_SHORT[todayDayIdx];
+        return (skincareSteps[part]||[]).map(step=>({
+          step,
+          done: !!(partData[step]&&partData[step][dl])
+        }));
+      };
+
+      // Split daily tasks by assigned time (default evening)
+      const morningDailyTasks = dailyTasks.filter(t => taskTimes[t] === "morning");
+      const eveningDailyTasks = dailyTasks.filter(t => taskTimes[t] !== "morning");
+      const morningWeeklyTasks = (weeklyForToday).filter(t => taskTimes["weekly:"+t] === "morning");
+      const eveningWeeklyTasks = (weeklyForToday).filter(t => taskTimes["weekly:"+t] !== "morning");
+
+      const TaskChecklist = ({ daily, weekly, timeKey }) => (
+        <div>
+          {daily.map((t,i)=>{ const done=!!cleaning["daily:"+t+":"+today()]; return (
+            <div key={i} style={{ display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:`1px solid ${C.border2}` }}>
+              <button onClick={()=>toggleCleaning("daily",t)} style={{ ...S.check,...(done?S.checkOn:{}) }}>✓</button>
+              <span style={{ fontSize:13,color:C.ink2,textDecoration:done?"line-through":"none",opacity:done?0.5:1 }}>{t}</span>
+            </div>
+          );})}
+          {weekly.length>0 && (
+            <div style={{ marginTop:daily.length?8:0, paddingTop:daily.length?8:0, borderTop:daily.length?`1px solid ${C.border2}`:"none" }}>
+              {daily.length>0 && <div style={{ ...S.label, marginBottom:6 }}>Also today ({dayOfWeek})</div>}
+              {weekly.map((t,i)=>{ const done=!!cleaning["weekly:"+t+":"+today()]; return (
+                <div key={i} style={{ display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:`1px solid ${C.border2}` }}>
+                  <button onClick={()=>toggleCleaning("weekly",t)} style={{ ...S.check,...(done?S.checkOn:{}) }}>✓</button>
+                  <span style={{ fontSize:13,color:C.ink2,textDecoration:done?"line-through":"none",opacity:done?0.5:1 }}>{t}</span>
+                </div>
+              );})}
+            </div>
+          )}
+          {daily.length===0 && weekly.length===0 && <p style={S.empty}>No tasks assigned here yet ✦<br/><span style={{fontSize:11}}>Set them in More → Tasks</span></p>}
+        </div>
+      );
+
+      const morningSteps = [
+        {
+          label: "How are you feeling right now?",
+          content: <MoodBlock mood={todayMood&&todayMood.mood} onMood={setMood} note={(todayMood&&todayMood.note)||""} onNote={setMoodNote} />
+        },
+        {
+          label: "Sleep last night",
+          hint: "While it's still fresh",
+          content: (
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              <div>
+                <label style={S.label}>Hours slept</label>
+                <input type="number" min="0" max="24" step="0.5" value={(todayHealth.sleep&&todayHealth.sleep.hours)||""} onChange={e=>updateHealth("sleep",{...(todayHealth.sleep||{}),hours:e.target.value})} placeholder="e.g. 7.5" style={S.input} />
+              </div>
+              <div>
+                <label style={S.label}>Quality</label>
+                <div style={{ display:"flex", gap:4 }}>
+                  {["😴","😐","😊"].map((e,i)=>{ const q=["Poor","Okay","Good"][i]; return <button key={q} onClick={()=>updateHealth("sleep",{...(todayHealth.sleep||{}),quality:q})} style={{ ...S.pill,flex:1,textAlign:"center",...((todayHealth.sleep&&todayHealth.sleep.quality)===q?S.pillOn:{}) }}>{e}</button>; })}
+                </div>
+              </div>
+            </div>
+          )
+        },
+        {
+          label: "Set 3 intentions for today",
+          hint: "One for work · one for body · one for yourself",
+          content: (
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {["Work","Body","Yourself"].map((cat,i)=>(
+                <div key={i}>
+                  <label style={S.label}>{cat}</label>
+                  <input value={journal["int"+i]||""} onChange={e=>update("int"+i,e.target.value)} placeholder={"e.g. "+["reply to all emails","drink 8 glasses","read 10 pages"][i]} style={S.input} />
+                </div>
+              ))}
+            </div>
+          )
+        },
+        {
+          label: "3 things you're grateful for",
+          content: (
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {[0,1,2].map(i=>(
+                <input key={i} value={journal["g"+i]||""} onChange={e=>update("g"+i,e.target.value)} placeholder={(i+1)+". I'm grateful for..."} style={S.input} />
+              ))}
+            </div>
+          )
+        },
+        {
+          label: "Morning skincare · AM routine",
+          hint: "Tick each step as you go",
+          content: (
+            <div>
+              {skincareAMtoday("am").map(({step,done},i)=>(
+                <div key={i} style={{ display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:i<skincareSteps.am.length-1?`1px solid ${C.border2}`:"none" }}>
+                  <button onClick={()=>toggleSkincare("am",step,todayDayIdx)} style={{ ...S.check,...(done?S.checkOn:{}) }}>✓</button>
+                  <span style={{ fontSize:13,color:C.ink2,textDecoration:done?"line-through":"none",opacity:done?0.5:1 }}>{step}</span>
+                </div>
+              ))}
+            </div>
+          )
+        },
+        ...(morningDailyTasks.length>0||morningWeeklyTasks.length>0 ? [{
+          label: "Morning home tasks",
+          content: <TaskChecklist daily={morningDailyTasks} weekly={morningWeeklyTasks} />
+        }] : []),
+        {
+          label: "Today's habits",
+          hint: habits.length===0?"Add your first habit below ✦":done+"/"+habits.length+" done",
+          content: (
+            <div>
+              {habits.map(h=>{
+                const isDone=!!h.completions[today()];
+                return (
+                  <div key={h.id} style={{ display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:`1px solid ${C.border2}` }}>
+                    <button onClick={()=>toggleHabit(h.id)} style={{ ...S.check,...(isDone?S.checkOn:{}) }}>✓</button>
+                    <span style={{ flex:1,fontSize:13,color:C.ink2,textDecoration:isDone?"line-through":"none",opacity:isDone?0.5:1 }}>{h.name}</span>
+                    <span style={{ fontSize:11,color:C.gold }}>{h.streak}d</span>
+                  </div>
+                );
+              })}
+              {addingHabit ? (
+                <div style={{ display:"flex",gap:6,marginTop:8 }}>
+                  <input value={newHabit} onChange={e=>setNewHabit(e.target.value)} onKeyDown={e=>e.key==="Enter"&&(addHabit(newHabit),setNewHabit(""),setAddingHabit(false))} placeholder="New habit name..." style={S.input} autoFocus />
+                  <Btn onClick={()=>{addHabit(newHabit);setNewHabit("");setAddingHabit(false);}}>Add</Btn>
+                </div>
+              ) : (
+                <button onClick={()=>setAddingHabit(true)} style={{ ...S.ghostBtn,marginTop:8,width:"100%",textAlign:"center" }}>+ Add habit</button>
+              )}
+            </div>
+          )
+        },
+        {
+          label: "💧 Water intake",
+          hint: "How much have you had so far?",
+          content: (
+            <div>
+              <div style={{ ...S.label,marginBottom:8 }}>{todayHealth.water||0} of {WATER_GOAL} glasses</div>
+              <div style={{ display:"flex",gap:3,flexWrap:"wrap" }}>
+                {Array.from({length:WATER_GOAL}).map((_,i)=>(
+                  <button key={i} onClick={()=>updateHealth("water",i<(todayHealth.water||0)?i:i+1)} style={{ fontSize:26,background:"none",border:"none",cursor:"pointer",opacity:i<(todayHealth.water||0)?1:0.18,padding:"2px" }}>💧</button>
+                ))}
+              </div>
+            </div>
+          )
+        },
+      ];
+
+      const eveningSteps = [
+        {
+          label: "One thing you're proud of today",
+          hint: "Big or tiny, it counts ✦",
+          content: <textarea value={journal.proud||""} onChange={e=>update("proud",e.target.value)} rows={3} placeholder="I showed up for myself by..." style={S.textarea} />
+        },
+        {
+          label: "How did today actually feel?",
+          content: <MoodBlock mood={todayMood&&todayMood.mood} onMood={setMood} note={(todayMood&&todayMood.note)||""} onNote={setMoodNote} />
+        },
+        {
+          label: "Evening skincare · PM routine",
+          hint: "Tick each step as you go",
+          content: (
+            <div>
+              {skincareAMtoday("pm").map(({step,done},i)=>(
+                <div key={i} style={{ display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:i<skincareSteps.pm.length-1?`1px solid ${C.border2}`:"none" }}>
+                  <button onClick={()=>toggleSkincare("pm",step,todayDayIdx)} style={{ ...S.check,...(done?S.checkOn:{}) }}>✓</button>
+                  <span style={{ fontSize:13,color:C.ink2,textDecoration:done?"line-through":"none",opacity:done?0.5:1 }}>{step}</span>
+                </div>
+              ))}
+            </div>
+          )
+        },
+        {
+          label: "Evening home tasks",
+          hint: "Quick tick before you settle in",
+          content: <TaskChecklist daily={eveningDailyTasks} weekly={eveningWeeklyTasks} />
+        },
+        {
+          label: "Movement today",
+          hint: "Even a walk counts",
+          content: (
+            <div style={{ display:"flex",gap:6,flexWrap:"wrap" }}>
+              {WORKOUTS.map(w=>{ const wo=todayHealth.workout||[]; return <button key={w} onClick={()=>updateHealth("workout",wo.includes(w)?wo.filter(x=>x!==w):[...wo,w])} style={{ ...S.pill,...(wo.includes(w)?S.pillOn:{}) }}>{w}</button>; })}
+              {(todayHealth.workout||[]).length===0 && <button onClick={()=>updateHealth("workout",["Rest day"])} style={S.pill}>Rest day 🌿</button>}
+            </div>
+          )
+        },
+        {
+          label: "Any cycle symptoms today?",
+          hint: "Skip if not relevant",
+          content: (
+            <div>
+              <div style={{ display:"flex",gap:6,flexWrap:"wrap",marginBottom:10 }}>
+                {FLOW_LEVELS.map(f=><button key={f} onClick={()=>setFlow(f)} style={{ ...S.pill,...(todayPeriod.flow===f?{...S.pillOn,background:"#c47a7a",borderColor:"#c47a7a"}:{}) }}>{f}</button>)}
+              </div>
+              <div style={{ display:"flex",flexWrap:"wrap",gap:6 }}>
+                {symptoms.map(s=>{ const active=(todayPeriod.symptoms||[]).includes(s); return <button key={s} onClick={()=>toggleSymptom(s)} style={{ ...S.pill,...(active?S.pillOn:{}) }}>{s}</button>; })}
+              </div>
+            </div>
+          )
+        },
+        {
+          label: "Brain dump",
+          hint: "Get it out so you can actually rest",
+          content: <textarea value={journal.distract||""} onChange={e=>update("distract",e.target.value)} rows={4} placeholder="Everything taking up space in your head..." style={S.textarea} />
+        },
+      ];
+
+      const steps = mode==="morning" ? morningSteps : eveningSteps;
+
+      if(mode==="morning"||mode==="evening") {
+        const s=steps[step], isLast=step===steps.length-1;
+        return (
+          <div style={S.col} className="fade-up">
+            <div style={{ background:C.bg2, borderRadius:12, padding:"12px 14px", border:`1px solid ${C.border}` }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+                <span style={{ fontSize:16, fontStyle:"italic", fontFamily:"'Cormorant Garamond',serif", color:C.ink }}>
+                  {mode==="morning" ? "☀️ Morning check-in" : "🌙 Evening wind-down"}
+                </span>
+                <button onClick={()=>setMode("home")} style={{ ...S.iconBtn, fontSize:20, color:C.ink3 }}>×</button>
+              </div>
+              <div style={{ fontSize:11, color:C.ink3, marginBottom:6 }}>Step {step+1} of {steps.length}</div>
+              <ProgressBar pct={(step+1)/steps.length*100} />
+            </div>
+
+            <Card title={s.label}>
+              {s.hint && <p style={{ fontSize:12, color:C.ink3, fontStyle:"italic", marginBottom:10 }}>{s.hint}</p>}
+              {s.content}
+            </Card>
+
+            <div style={{ display:"flex", gap:8 }}>
+              {step>0 && <Btn outline onClick={()=>setStep(i=>i-1)}>← Back</Btn>}
+              <Btn onClick={()=>isLast?setMode("home"):setStep(i=>i+1)} style={{flex:1}}>
+                {isLast?"All done ✓":"Next →"}
+              </Btn>
+            </div>
+            {!isLast && <button onClick={()=>setMode("home")} style={{ background:"none", border:"none", cursor:"pointer", color:C.ink3, fontSize:12, textAlign:"center", fontFamily:"inherit" }}>Skip the rest for now</button>}
+          </div>
+        );
+      }
+
+      // ── HOME VIEW ────────────────────────────────────────────────────────
+      const morningDone = !!(journal.int0||journal.int1||journal.int2);
+      const eveningDone = !!journal.proud;
+
+      return (
+        <div style={S.col} className="fade-up">
+
+          {/* Check-in entry cards */}
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={()=>{setMode("morning");setStep(0);}} style={{ flex:1, background:morningDone?C.bg3:C.card, border:`1.5px solid ${morningDone?C.gold:C.border}`, borderRadius:14, padding:"14px 12px", cursor:"pointer", textAlign:"left", fontFamily:"inherit" }}>
+              <div style={{ fontSize:22, marginBottom:4 }}>☀️</div>
+              <div style={{ fontSize:15, fontFamily:"'Cormorant Garamond',serif", fontStyle:"italic", color:C.ink }}>Morning</div>
+              <div style={{ fontSize:11, color:morningDone?C.gold:C.ink3, marginTop:2 }}>{morningDone?"Done ✓":"mood · intentions · skincare · habits · water"}</div>
+            </button>
+            <button onClick={()=>{setMode("evening");setStep(0);}} style={{ flex:1, background:eveningDone?C.bg3:C.card, border:`1.5px solid ${eveningDone?C.gold:C.border}`, borderRadius:14, padding:"14px 12px", cursor:"pointer", textAlign:"left", fontFamily:"inherit" }}>
+              <div style={{ fontSize:22, marginBottom:4 }}>🌙</div>
+              <div style={{ fontSize:15, fontFamily:"'Cormorant Garamond',serif", fontStyle:"italic", color:C.ink }}>Evening</div>
+              <div style={{ fontSize:11, color:eveningDone?C.gold:C.ink3, marginTop:2 }}>{eveningDone?"Done ✓":"proud · skincare · home · sleep · cycle"}</div>
+            </button>
+          </div>
+
+          {/* Quick snapshot */}
+          <Card title="Quick log">
+            <MoodBlock mood={todayMood&&todayMood.mood} onMood={setMood} note={(todayMood&&todayMood.note)||""} onNote={setMoodNote} />
+            <div style={{ marginTop:12, paddingTop:10, borderTop:`1px solid ${C.border2}` }}>
+              <div style={{ ...S.label, marginBottom:6 }}>💧 Water · {todayHealth.water||0}/{WATER_GOAL}</div>
+              <div style={{ display:"flex", gap:2, flexWrap:"wrap" }}>
+                {Array.from({length:WATER_GOAL}).map((_,i)=>(
+                  <button key={i} onClick={()=>updateHealth("water",i<(todayHealth.water||0)?i:i+1)} style={{ fontSize:22, background:"none", border:"none", cursor:"pointer", opacity:i<(todayHealth.water||0)?1:0.18, padding:"1px" }}>💧</button>
+                ))}
+              </div>
+            </div>
+            {habits.length>0 && (
+              <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${C.border2}` }}>
+                <div style={{ ...S.label, marginBottom:6 }}>Habits · {done}/{habits.length}</div>
+                <ProgressBar pct={habits.length?(done/habits.length*100):0} />
+                <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginTop:8 }}>
+                  {habits.map(h=>{ const isDone=!!h.completions[today()]; return <button key={h.id} onClick={()=>toggleHabit(h.id)} style={{ ...S.pill,...(isDone?{...S.pillOn,opacity:0.75}:{}) }}>{isDone?"✓ ":""}{h.name}</button>; })}
+                </div>
+              </div>
+            )}
+          </Card>
+
+          {/* Today's intentions */}
+          {morningDone && (
+            <Card title="Today's intentions">
+              {["Work","Body","Yourself"].map((cat,i)=>
+                journal["int"+i]?(
+                  <div key={i} style={{ display:"flex", gap:8, alignItems:"flex-start", marginBottom:i<2?7:0 }}>
+                    <span style={{ fontSize:10, color:C.ink3, width:54, paddingTop:2, letterSpacing:"0.08em", textTransform:"uppercase", flexShrink:0 }}>{cat}</span>
+                    <span style={{ fontSize:13, color:C.ink2 }}>{journal["int"+i]}</span>
+                  </div>
+                ):null
+              )}
+            </Card>
+          )}
+
+          {/* Proud moment */}
+          {eveningDone && journal.proud && (
+            <div style={{ background:`linear-gradient(135deg,${C.bg2} 0%,${C.goldSoft}40 100%)`, border:`1px solid ${C.goldSoft}`, borderRadius:14, padding:"14px 16px" }}>
+              <div style={{ fontSize:10, color:C.gold, letterSpacing:"0.1em", textTransform:"uppercase", fontWeight:500, marginBottom:6 }}>Today I'm proud of...</div>
+              <p style={{ fontSize:14, color:C.ink, fontStyle:"italic", fontFamily:"'Cormorant Garamond',serif", lineHeight:1.6 }}>"{journal.proud}"</p>
+            </div>
+          )}
+
+          <FocusTimer />
+        </div>
+      );
+    }
+
+    function MoodBlock({ mood, onMood, note, onNote }) {
+      return (
+        <div>
+          <div style={{ display:"flex", gap:4, justifyContent:"space-between" }}>
+            {MOODS.map(m=>(
+              <button key={m.label} onClick={()=>onMood(m.label)} title={m.label}
+                style={{ flex:1, display:"flex", justifyContent:"center", padding:"8px 2px", borderRadius:10, border:`1.5px solid ${mood===m.label?m.color:"transparent"}`, background:mood===m.label?m.color+"15":C.bg2, cursor:"pointer", transition:"all 0.15s" }}>
+                <span style={{fontSize:24}}>{m.emoji}</span>
+              </button>
+            ))}
+          </div>
+          {mood && <input value={note} onChange={e=>onNote(e.target.value)} placeholder="Add a note..." style={{ ...S.input, marginTop:8, fontSize:13 }} />}
+        </div>
+      );
+    }
+
+    function FocusTimer() {
+      const PRESETS=[{label:"5 min",s:300},{label:"10 min",s:600},{label:"25 min",s:1500},{label:"45 min",s:2700}];
+      const [total,  setTotal]  = useState(1500);
+      const [rem,    setRem]    = useState(1500);
+      const [running,setRunning]= useState(false);
+      const [done,   setDone]   = useState(false);
+      const [open,   setOpen]   = useState(false);
+      const ref = useRef(null);
+
+      useEffect(()=>{
+        if(running){ ref.current=setInterval(()=>{ setRem(r=>{ if(r<=1){ clearInterval(ref.current); setRunning(false); setDone(true); return 0; } return r-1; }); },1000); }
+        else clearInterval(ref.current);
+        return ()=>clearInterval(ref.current);
+      },[running]);
+
+      const reset=s=>{ clearInterval(ref.current); setTotal(s); setRem(s); setRunning(false); setDone(false); };
+      const mins=Math.floor(rem/60), secs=rem%60, pct=(rem/total)*100;
+      const r=34, circ=2*Math.PI*r;
+
+      return (
+        <div style={S.card}>
+          <button onClick={()=>setOpen(o=>!o)} style={{ width:"100%", display:"flex", justifyContent:"space-between", alignItems:"center", background:"none", border:"none", cursor:"pointer", fontFamily:"inherit" }}>
+            <span style={S.cardTitle}>⏱ Focus timer</span>
+            <span style={{ color:C.ink3, fontSize:18 }}>{open?"−":"+"}</span>
+          </button>
+          {open && (
+            <div style={{ marginTop:12 }}>
+              <div style={{ display:"flex", gap:5, justifyContent:"center", marginBottom:12, flexWrap:"wrap" }}>
+                {PRESETS.map(p=><button key={p.s} onClick={()=>reset(p.s)} style={{ ...S.pill,...(total===p.s?S.pillOn:{}) }}>{p.label}</button>)}
+              </div>
+              <div style={{ textAlign:"center" }}>
+                <div style={{ position:"relative", display:"inline-flex", alignItems:"center", justifyContent:"center", marginBottom:10 }}>
+                  <svg width="90" height="90" style={{transform:"rotate(-90deg)"}}>
+                    <circle cx="45" cy="45" r={r} fill="none" stroke={C.bg3} strokeWidth="6" />
+                    <circle cx="45" cy="45" r={r} fill="none" stroke={done?C.sage:C.rose} strokeWidth="6"
+                      strokeDasharray={circ} strokeDashoffset={circ*(1-pct/100)} strokeLinecap="round"
+                      style={{transition:"stroke-dashoffset 1s linear"}} />
+                  </svg>
+                  <div style={{ position:"absolute", textAlign:"center" }}>
+                    <div style={{ fontSize:done?12:18, fontWeight:500, color:done?C.sage:C.rose, fontFamily:"'Cormorant Garamond',serif", fontStyle:"italic" }}>
+                      {done?"Done!":String(mins).padStart(2,"0")+":"+String(secs).padStart(2,"0")}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display:"flex", gap:8, justifyContent:"center" }}>
+                  <Btn onClick={()=>setRunning(r=>!r)} style={{minWidth:80}}>{running?"Pause":"Start"}</Btn>
+                  <button onClick={()=>reset(total)} style={S.ghostBtn}>Reset</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ── ROUTINE TAB ───────────────────────────────────────────────────────────
+    // Time-aware view of what to do RIGHT NOW based on schedule
+    function RoutineTab({ dayType, habits, toggleHabit, cleaning, toggleCleaning, dailyTasks, weeklyTasks, monthlyTasks, todayHealth, updateHealth, skincare, skincareSteps, toggleSkincare }) {
+      const hour = getHour();
+      const phase = dayType.phase;
+
+      const sections = [];
+
+      // Morning section
+      if(["morning","night"].includes(phase)||hour<11) {
+        sections.push({
+          time:"Morning routine",
+          icon:"🌅",
+          active: phase==="morning"||phase==="night",
+          items:[
+            { label:"Skincare AM", type:"skincare-am" },
+            { label:"Drink a glass of water", type:"water" },
+            { label:"Check today's intentions", type:"link-today" },
+          ]
+        });
+      }
+
+      // Commute
+      if(phase==="commute-to"||phase==="commute-home") {
+        sections.push({
+          time: phase==="commute-to"?"Commute there":"Commute home",
+          icon:"🚇",
+          active: true,
+          hint: phase==="commute-to"?"Use this time to read or listen — not scroll ✦":"You made it. Rest your mind on the way home.",
+          items:[
+            { label:"Read a few pages", type:"info" },
+            { label:"Listen to something good", type:"info" },
+            { label:"No doom-scrolling 🌿", type:"info" },
+          ]
+        });
+      }
+
+      // Work day chores
+      const dayOfWeek = new Date().toLocaleDateString("en-US",{weekday:"long"}).slice(0,3);
+      const weeklyForToday = weeklyTasks[dayOfWeek]||[];
+
+      if(!["commute-to","work"].includes(phase)||hour>19) {
+        sections.push({
+          time:"Home tasks",
+          icon:"🏠",
+          active: phase==="evening"||phase==="commute-home",
+          items: dailyTasks.map(t=>({ label:t, type:"chore-daily", key:t }))
+        });
+      }
+
+      // Weekly chore
+      if(weeklyForToday.length>0&&!["commute-to","work"].includes(phase)) {
+        sections.push({
+          time:"This "+dayOfWeek,
+          icon:"🧹",
+          active: phase==="evening",
+          items: weeklyForToday.map(t=>({ label:t, type:"chore-weekly", key:t }))
+        });
+      }
+
+      // Exercise slot
+      if(["evening","commute-home","morning"].includes(phase)) {
+        sections.push({
+          time:"Movement",
+          icon:"🏃‍♀️",
+          active: phase==="evening"||phase==="morning",
+          hint:"Even 15 minutes counts.",
+          items:[
+            { label:"Walk, stretch, or workout", type:"workout" },
+          ]
+        });
+      }
+
+      // Evening
+      if(phase==="evening"||hour>=19) {
+        sections.push({
+          time:"Evening routine",
+          icon:"🌙",
+          active: phase==="evening",
+          items:[
+            { label:"Skincare PM", type:"skincare-pm" },
+            { label:"Evening check-in", type:"link-evening" },
+            { label:"Set tomorrow's intentions", type:"info" },
+            { label:"Screens off 30 min before bed", type:"info" },
+          ]
+        });
+      }
+
+      const ChoreCheck = ({ label, done, onToggle }) => (
+        <div style={{ display:"flex", alignItems:"center", gap:10, padding:"6px 0", borderBottom:`1px solid ${C.border2}` }}>
+          <button onClick={onToggle} style={{ ...S.check,...(done?S.checkOn:{}) }}>✓</button>
+          <span style={{ fontSize:13, color:C.ink2, textDecoration:done?"line-through":"none", opacity:done?0.5:1 }}>{label}</span>
+        </div>
+      );
+
+      const HabitBlock = () => (
+        <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+          {habits.map(h=>{
+            const isDone=!!h.completions[today()];
+            return <button key={h.id} onClick={()=>toggleHabit(h.id)} style={{ ...S.pill,...(isDone?{...S.pillOn,opacity:0.75}:{}) }}>{isDone?"✓ ":""}{h.name}</button>;
+          })}
+        </div>
+      );
+
+      return (
+        <div style={S.col} className="fade-up">
+          <div style={{ background:C.bg2, borderRadius:12, padding:"12px 14px", border:`1px solid ${C.border}` }}>
+            <div style={{ fontSize:10, color:C.ink3, letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:2, fontWeight:500 }}>Right now</div>
+            <div style={{ fontSize:18, fontFamily:"'Cormorant Garamond',serif", fontStyle:"italic", color:C.ink }}>{dayType.label}</div>
+            <div style={{ fontSize:12, color:C.ink3, marginTop:2 }}>
+              {phase==="work"?"You're at work — this is waiting for you 🌿":
+               phase==="commute-to"||phase==="commute-home"?"You're in transit 🚇":
+               "Here's what to focus on now"}
+            </div>
+          </div>
+
+          {/* Habits always visible */}
+          {habits.length>0 && (
+            <Card title="Habits">
+              <HabitBlock />
+            </Card>
+          )}
+
+          {sections.map((sec,si)=>(
+            <div key={si} style={{ ...S.card, borderLeft:`3px solid ${sec.active?C.rose:C.border2}`, opacity:sec.active?1:0.65 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
+                <span style={{fontSize:18}}>{sec.icon}</span>
+                <span style={{ fontSize:15, fontFamily:"'Cormorant Garamond',serif", fontStyle:"italic", color:C.ink }}>{sec.time}</span>
+                {sec.active && <span style={{ fontSize:10, background:C.roseSoft, color:C.rose, borderRadius:20, padding:"2px 8px", marginLeft:"auto", fontWeight:500 }}>Now</span>}
+              </div>
+              {sec.hint && <p style={{ fontSize:12, color:C.ink3, fontStyle:"italic", marginBottom:8 }}>{sec.hint}</p>}
+              {sec.items.map((item,ii)=>{
+                if(item.type==="chore-daily") return <ChoreCheck key={ii} label={item.label} done={!!cleaning["daily:"+item.key+":"+today()]} onToggle={()=>toggleCleaning("daily",item.key)} />;
+                if(item.type==="chore-weekly") return <ChoreCheck key={ii} label={item.label} done={!!cleaning["weekly:"+item.key+":"+today()]} onToggle={()=>toggleCleaning("weekly",item.key)} />;
+                if(item.type==="water") return (
+                  <div key={ii} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:`1px solid ${C.border2}` }}>
+                    <span style={{fontSize:20}}>💧</span>
+                    <span style={{fontSize:13,color:C.ink2}}>Water · {todayHealth.water||0}/{WATER_GOAL}</span>
+                    <button onClick={()=>updateHealth("water",(todayHealth.water||0)+1)} style={{ marginLeft:"auto", ...S.pill, padding:"3px 10px" }}>+1</button>
+                  </div>
+                );
+                if(item.type==="workout") return (
+                  <div key={ii} style={{ display:"flex", gap:6, flexWrap:"wrap", padding:"4px 0" }}>
+                    {WORKOUTS.slice(0,5).map(w=>{
+                      const wo=todayHealth.workout||[];
+                      return <button key={w} onClick={()=>updateHealth("workout",wo.includes(w)?wo.filter(x=>x!==w):[...wo,w])} style={{ ...S.pill,...(( todayHealth.workout||[]).includes(w)?S.pillOn:{}) }}>{w}</button>;
+                    })}
+                  </div>
+                );
+                // info item (no interaction)
+                return (
+                  <div key={ii} style={{ display:"flex", alignItems:"center", gap:10, padding:"6px 0", borderBottom:ii<sec.items.length-1?`1px solid ${C.border2}`:"none" }}>
+                    <span style={{ fontSize:14, color:C.ink3 }}>✦</span>
+                    <span style={{ fontSize:13, color:C.ink2 }}>{item.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // ── TRACK TAB — today's overview dashboard ────────────────────────────────
+    function TrackTab({ health, habits, badges, skincare, skincareSteps, cleaning, dailyTasks, weeklyTasks, moodLog, journal, period }) {
+      const todayMood = moodLog[today()];
+      const moodObj   = MOODS.find(m=>m.label===(todayMood&&todayMood.mood));
+      const habitsDone= habits.filter(h=>h.completions[today()]).length;
+      const wk        = weekKey();
+      const todayDayIdx=(new Date().getDay()+6)%7;
+      const dl        = DAYS_SHORT[todayDayIdx];
+      const todayPeriod = period[today()]||{};
+      const amSteps = skincareSteps.am||[];
+      const pmSteps = skincareSteps.pm||[];
+      const amDone  = amSteps.filter(s=>skincare[wk]&&skincare[wk].am&&skincare[wk].am[s]&&skincare[wk].am[s][dl]).length;
+      const pmDone  = pmSteps.filter(s=>skincare[wk]&&skincare[wk].pm&&skincare[wk].pm[s]&&skincare[wk].pm[s][dl]).length;
+      const dayOfWeek = new Date().toLocaleDateString("en-US",{weekday:"long"}).slice(0,3);
+      const dailyCount= dailyTasks.filter(t=>!!cleaning["daily:"+t+":"+today()]).length;
+      const recentProud=[];
+      for(let i=0;i<7;i++){ const d=new Date(); d.setDate(d.getDate()-i); const k=toKey(d); if(journal[k]&&journal[k].proud) recentProud.push({date:k,text:journal[k].proud}); }
+      const earned = MILESTONES.filter(m=>badges.includes(m.id));
+
+      const StatRow = ({ icon, label, value, subvalue, color, pct }) => (
+        <div style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 0", borderBottom:`1px solid ${C.border2}` }}>
+          <span style={{ fontSize:20, width:28, textAlign:"center", flexShrink:0 }}>{icon}</span>
+          <div style={{ flex:1 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline" }}>
+              <span style={{ fontSize:13, color:C.ink2 }}>{label}</span>
+              <span style={{ fontSize:13, fontWeight:500, color:color||C.ink }}>{value}</span>
+            </div>
+            {subvalue && <div style={{ fontSize:11, color:C.ink3, marginTop:1 }}>{subvalue}</div>}
+            {pct!==undefined && <div style={{ ...S.bar, marginTop:5 }}><div style={{ ...S.barFill, width:pct+"%" }} /></div>}
+          </div>
+        </div>
+      );
+
+      return (
+        <div style={S.col} className="fade-up">
+          <Card title="Today at a glance">
+            <StatRow icon={moodObj?moodObj.emoji:"·"} label="Mood" value={(todayMood&&todayMood.mood)||"—"} subvalue={todayMood&&todayMood.note} color={moodObj&&moodObj.color} />
+            <StatRow icon="😴" label="Sleep" value={health.sleep&&health.sleep.hours?health.sleep.hours+"h":"—"} subvalue={health.sleep&&health.sleep.quality} />
+            <StatRow icon="💧" label="Water" value={(health.water||0)+"/"+WATER_GOAL} pct={Math.round((health.water||0)/WATER_GOAL*100)} />
+            <StatRow icon="💜" label="Habits" value={habitsDone+"/"+habits.length} pct={habits.length?Math.round(habitsDone/habits.length*100):0} subvalue={habitsDone===habits.length&&habits.length>0?"All done today 🎉":undefined} />
+            <StatRow icon="✨" label="AM skincare" value={amDone+"/"+amSteps.length} pct={amSteps.length?Math.round(amDone/amSteps.length*100):0} />
+            <StatRow icon="🌙" label="PM skincare" value={pmDone+"/"+pmSteps.length} pct={pmSteps.length?Math.round(pmDone/pmSteps.length*100):0} />
+            <StatRow icon="🏠" label="Home tasks" value={dailyCount+"/"+dailyTasks.length} pct={dailyTasks.length?Math.round(dailyCount/dailyTasks.length*100):0} />
+            {(health.workout||[]).length>0 && <StatRow icon="🏃‍♀️" label="Movement" value={(health.workout||[]).join(", ")} />}
+            {todayPeriod.flow && <StatRow icon="🌸" label="Cycle" value={todayPeriod.flow} subvalue={(todayPeriod.symptoms||[]).slice(0,3).join(", ")||undefined} color="#c47a7a" />}
+          </Card>
+
+          {habits.length>0 && (
+            <Card title="Streaks">
+              <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                {habits.map(h=>(
+                  <div key={h.id} style={S.streakCard}>
+                    <div style={{ fontSize:18, fontWeight:500, color:h.streak>=7?C.gold:h.streak>=3?C.rose:C.ink2 }}>{h.streak}</div>
+                    <div style={{ fontSize:9, color:C.ink3, marginTop:2, maxWidth:64, lineHeight:1.3, textAlign:"center" }}>{h.name}</div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          <Card title="Skincare this week">
+            {["am","pm"].map(part=>{
+              const steps=skincareSteps[part]||[];
+              const totalPossible=steps.length*7;
+              const totalDone=steps.reduce((acc,step)=>{ const row=(skincare[wk]&&skincare[wk][part]&&skincare[wk][part][step])||{}; return acc+DAYS_SHORT.filter(d=>row[d]).length; },0);
+              return (
+                <div key={part} style={{ marginBottom:part==="am"?12:0 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:5 }}>
+                    <span style={{ fontSize:12, color:C.ink2 }}>{part==="am"?"AM routine":"PM routine"}</span>
+                    <span style={{ fontSize:11, color:C.ink3 }}>{totalDone}/{totalPossible}</span>
+                  </div>
+                  <ProgressBar pct={totalPossible?Math.round(totalDone/totalPossible*100):0} />
+                </div>
+              );
+            })}
+          </Card>
+
+          {recentProud.length>0 && (
+            <Card title="Recent wins ✦">
+              {recentProud.slice(0,3).map((p,i)=>(
+                <div key={i} style={{ padding:"7px 0", borderBottom:i<Math.min(2,recentProud.length-1)?`1px solid ${C.border2}`:"none" }}>
+                  <div style={{ fontSize:10, color:C.ink3, marginBottom:2 }}>{new Date(p.date+"T12:00:00").toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"})}</div>
+                  <div style={{ fontSize:13, color:C.ink2, fontStyle:"italic", fontFamily:"'Cormorant Garamond',serif" }}>"{p.text}"</div>
+                </div>
+              ))}
+            </Card>
+          )}
+
+          {earned.length>0 && (
+            <Card title="Badges earned">
+              <div style={{ display:"flex", gap:12, flexWrap:"wrap" }}>
+                {earned.map(m=>(
+                  <div key={m.id} style={{ textAlign:"center" }}>
+                    <div style={{fontSize:32}}>{m.emoji}</div>
+                    <div style={{ fontSize:9, color:C.rose, marginTop:3, maxWidth:58, lineHeight:1.3, fontWeight:500 }}>{m.label}</div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+        </div>
+      );
+    }
+
+
+    // ── REVIEW TAB ─────────────────────────────────────────────────────────────
+    function ReviewTab({ journal, habits, health, moodLog, period, badges }) {
+      const [sub, setSub] = useState("calendar");
+      return (
+        <div style={S.col}>
+          <div style={S.subNav}>
+            <button onClick={()=>setSub("calendar")} style={{ ...S.subTab,...(sub==="calendar"?S.subTabOn:{}) }}>📅 Calendar</button>
+            <button onClick={()=>setSub("mood")}     style={{ ...S.subTab,...(sub==="mood"?S.subTabOn:{}) }}>🌟 Mood</button>
+            <button onClick={()=>setSub("wins")}     style={{ ...S.subTab,...(sub==="wins"?S.subTabOn:{}) }}>✨ Wins</button>
+          </div>
+          {sub==="calendar" && <CalendarView journal={journal} habits={habits} health={health} moodLog={moodLog} period={period} />}
+          {sub==="mood"     && <MoodHistory moodLog={moodLog} />}
+          {sub==="wins"     && <WinsView habits={habits} badges={badges} moodLog={moodLog} journal={journal} />}
+        </div>
+      );
+    }
+
+    function CalendarView({ journal, habits, health, moodLog, period }) {
+      const now=new Date();
+      const [yr,setYr]=useState(now.getFullYear());
+      const [mo,setMo]=useState(now.getMonth());
+      const [sel,setSel]=useState(null);
+      const daysInMonth=new Date(yr,mo+1,0).getDate(), firstOffset=(new Date(yr,mo,1).getDay()+6)%7;
+      const dk=d=>yr+"-"+String(mo+1).padStart(2,"0")+"-"+String(d).padStart(2,"0");
+      const prevMo=()=>{ if(mo===0){setYr(y=>y-1);setMo(11);}else setMo(m=>m-1); setSel(null); };
+      const nextMo=()=>{ const nm=mo===11?0:mo+1,ny=mo===11?yr+1:yr; if(ny>now.getFullYear()||(ny===now.getFullYear()&&nm>now.getMonth())) return; setMo(nm); if(mo===11) setYr(y=>y+1); setSel(null); };
+      const score=ds=>{ let pts=0,tot=0; if(moodLog[ds]&&moodLog[ds].mood){tot+=2;const mi=MOODS.findIndex(m=>m.label===moodLog[ds].mood);pts+=mi<=1?2:mi===2?1:0;} if(habits.length>0){tot+=1;pts+=habits.filter(h=>h.completions[ds]).length/habits.length;} if(journal[ds]&&Object.values(journal[ds]).some(v=>v)){tot+=1;pts+=1;} return tot>0?pts/tot:null; };
+      const dotColor=ds=>{ const s=score(ds); if(s===null) return null; if(s>=0.7) return C.sage; if(s>=0.35) return C.gold; return C.rose; };
+      const selData=sel?{ mood:moodLog[sel], note:journal[sel], hab:habits.filter(h=>h.completions[sel]), water:(health[sel]&&health[sel].water)||0, flow:period[sel]&&period[sel].flow, symptoms:(period[sel]&&period[sel].symptoms)||[] }:null;
+
+      return (
+        <div style={S.col}>
+          <Card>
+            <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10 }}>
+              <button onClick={prevMo} style={S.arrowBtn}>{"<"}</button>
+              <span style={{ fontSize:15,fontFamily:"'Cormorant Garamond',serif",fontStyle:"italic",color:C.ink }}>{MONTHS[mo]} {yr}</span>
+              <button onClick={nextMo} style={S.arrowBtn}>{">"}</button>
+            </div>
+            <div style={{ display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:6 }}>
+              {DAYS_SHORT.map(d=><div key={d} style={{ textAlign:"center",fontSize:9,color:C.ink3,fontWeight:500 }}>{d}</div>)}
+            </div>
+            <div style={{ display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3 }}>
+              {Array.from({length:firstOffset}).map((_,i)=><div key={"e"+i} />)}
+              {Array.from({length:daysInMonth}).map((_,i)=>{
+                const day=i+1,ds=dk(day),isFuture=ds>today(),isTod=ds===today(),isSel=ds===sel;
+                const dc=dotColor(ds);
+                return (
+                  <button key={day} onClick={()=>!isFuture&&setSel(isSel?null:ds)} disabled={isFuture}
+                    style={{ display:"flex",flexDirection:"column",alignItems:"center",padding:"4px 2px",borderRadius:8,border:"none",cursor:isFuture?"default":"pointer",background:isSel?C.bg3:"transparent",opacity:isFuture?0.25:1,outline:isTod?`2px solid ${C.roseSoft}`:"none",outlineOffset:"-2px" }}>
+                    <span style={{ fontSize:11,color:isTod?C.rose:C.ink,fontWeight:isTod?600:400 }}>{day}</span>
+                    {dc && <div style={{ width:5,height:5,borderRadius:"50%",background:dc,marginTop:2 }} />}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ display:"flex",gap:10,marginTop:8,justifyContent:"center" }}>
+              {[[C.sage,"Great"],[C.gold,"Okay"],[C.rose,"Low"]].map(([c,l])=>(
+                <div key={l} style={{ display:"flex",alignItems:"center",gap:3 }}>
+                  <div style={{ width:7,height:7,borderRadius:"50%",background:c }} />
+                  <span style={{ fontSize:9,color:C.ink3 }}>{l}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+          {selData && (
+            <Card title={new Date(sel+"T12:00:00").toLocaleDateString("en-GB",{weekday:"long",month:"long",day:"numeric"})}>
+              {selData.mood&&selData.mood.mood && <div style={{ marginBottom:7 }}><span style={{ fontSize:11,color:C.ink3 }}>Mood · </span><span style={{ fontSize:13 }}>{(MOODS.find(m=>m.label===selData.mood.mood)||{}).emoji} {selData.mood.mood}</span></div>}
+              {selData.mood&&selData.mood.note && <div style={{ fontSize:12,color:C.ink2,fontStyle:"italic",marginBottom:7 }}>"{selData.mood.note}"</div>}
+              {selData.water>0 && <div style={{ marginBottom:6 }}><span style={{ fontSize:11,color:C.ink3 }}>Water · </span><span style={{ fontSize:12 }}>{"💧".repeat(selData.water)}</span></div>}
+              {selData.hab.length>0 && <div style={{ marginBottom:6 }}><span style={{ fontSize:11,color:C.ink3 }}>Habits · </span><span style={{ fontSize:12 }}>{selData.hab.map(h=>h.name).join(", ")}</span></div>}
+              {selData.flow && <div style={{ marginBottom:6 }}><span style={{ fontSize:11,color:C.ink3 }}>Flow · </span><span style={{ fontSize:12,color:"#c47a7a" }}>{selData.flow}</span></div>}
+              {selData.symptoms.length>0 && <div style={{ marginBottom:6 }}><span style={{ fontSize:11,color:C.ink3 }}>Symptoms · </span><span style={{ fontSize:12 }}>{selData.symptoms.join(", ")}</span></div>}
+              {selData.note&&selData.note.proud && <div style={{ marginTop:8,padding:"8px 10px",background:C.bg2,borderRadius:8 }}><span style={{ fontSize:11,color:C.gold }}>Proud of · </span><span style={{ fontSize:12,fontStyle:"italic" }}>{selData.note.proud}</span></div>}
+            </Card>
+          )}
+        </div>
+      );
+    }
+
+    function MoodHistory({ moodLog }) {
+      return (
+        <Card title="Last 14 days">
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:6 }}>
+            {Array.from({length:14}).map((_,i)=>{
+              const d=new Date(); d.setDate(d.getDate()-(13-i)); const k=toKey(d);
+              const mood=moodLog[k]&&moodLog[k].mood;
+              const mo=MOODS.find(m=>m.label===mood);
+              return (
+                <div key={i} style={{ textAlign:"center" }}>
+                  <div style={{ fontSize:9,color:C.ink3,marginBottom:3 }}>{d.toLocaleDateString("en-GB",{weekday:"short"})}</div>
+                  <div style={{ fontSize:9,color:C.ink3,marginBottom:2 }}>{d.getDate()}</div>
+                  <div style={{ fontSize:20,opacity:mood?1:0.15 }}>{mo?mo.emoji:"·"}</div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      );
+    }
+
+    function WinsView({ habits, badges, moodLog, journal }) {
+      const earned=MILESTONES.filter(m=>badges.includes(m.id));
+      const locked=MILESTONES.filter(m=>!badges.includes(m.id));
+      const proudMoments=[];
+      for(let i=0;i<30;i++){ const d=new Date(); d.setDate(d.getDate()-i); const k=toKey(d); if(journal[k]&&journal[k].proud) proudMoments.push({date:k,text:journal[k].proud}); }
+
+      return (
+        <div style={S.col}>
+          {proudMoments.length>0 && (
+            <Card title="Proud moments ✦">
+              {proudMoments.slice(0,5).map((p,i)=>(
+                <div key={i} style={{ padding:"8px 0", borderBottom:i<4&&i<proudMoments.length-1?`1px solid ${C.border2}`:"none" }}>
+                  <div style={{ fontSize:10,color:C.ink3,marginBottom:3 }}>{new Date(p.date+"T12:00:00").toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"})}</div>
+                  <div style={{ fontSize:13,color:C.ink2,fontStyle:"italic",fontFamily:"'Cormorant Garamond',serif" }}>"{p.text}"</div>
+                </div>
+              ))}
+            </Card>
+          )}
+          <Card title="Badges">
+            {earned.length===0 && <p style={S.empty}>Complete habits to earn badges ✦</p>}
+            <div style={{ display:"flex",gap:12,flexWrap:"wrap",marginBottom:earned.length&&locked.length?12:0 }}>
+              {earned.map(m=>(
+                <div key={m.id} style={{ textAlign:"center" }}>
+                  <div style={{fontSize:32}}>{m.emoji}</div>
+                  <div style={{ fontSize:9,color:C.rose,marginTop:3,maxWidth:58,lineHeight:1.3,fontWeight:500 }}>{m.label}</div>
+                </div>
+              ))}
+            </div>
+            {locked.length>0 && (
+              <div>
+                <div style={{ fontSize:10,color:C.ink3,marginBottom:8,fontStyle:"italic" }}>Still to unlock</div>
+                <div style={{ display:"flex",gap:12,flexWrap:"wrap" }}>
+                  {locked.map(m=>(
+                    <div key={m.id} style={{ textAlign:"center",opacity:0.2 }}>
+                      <div style={{fontSize:32}}>{m.emoji}</div>
+                      <div style={{ fontSize:9,color:C.ink3,marginTop:3,maxWidth:58,lineHeight:1.3 }}>{m.label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </Card>
+        </div>
+      );
+    }
+
+    // ── SETTINGS TAB ──────────────────────────────────────────────────────────
+    function SettingsTab({ skincareSteps,updateSkincareSteps,symptoms,updateSymptoms,dailyTasks,updateDailyTasks,weeklyTasks,updateWeeklyTasks,monthlyTasks,updateMonthlyTasks,taskTimes,updateTaskTimes,schedule,updateSchedule,allData,restoreData,showToast }) {
+      const [sub,setSub]=useState("routine");
+      const [dayOfWeek,setDayOfWeek]=useState("Mon");
+      const WEEK_DAYS=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+
+      const sc = schedule || DEFAULT_SCHEDULE;
+      const overrides = sc.dayOverrides || {};
+
+      const setField = (field, val) => updateSchedule({ ...sc, [field]: val });
+      const setOverride = (dk, val) => {
+        const next = { ...overrides };
+        if (val === "normal") delete next[dk]; else next[dk] = val;
+        updateSchedule({ ...sc, dayOverrides: next });
+      };
+
+      // Build next 14 days for override picker
+      const next14 = Array.from({length:14}, (_,i) => {
+        const d = new Date(); d.setDate(d.getDate()+i);
+        return { key: toKey(d), label: d.toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}), isToday: i===0 };
+      });
+
+      const TimeInput = ({ label, value, onChange }) => (
+        <div>
+          <label style={S.label}>{label}</label>
+          <input type="time" value={value} onChange={e=>onChange(e.target.value)}
+            style={{ ...S.input, fontSize:16 }} />
+        </div>
+      );
+
+      const exportData=()=>{ const blob=new Blob([JSON.stringify(allData(),null,2)],{type:"application/json"}); const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download="nessies-day-backup.json"; a.click(); URL.revokeObjectURL(url); showToast("Backup saved ✅"); };
+      const importData=e=>{ const file=e.target.files[0]; if(!file) return; const reader=new FileReader(); reader.onload=ev=>{ try{restoreData(JSON.parse(ev.target.result));}catch{showToast("Invalid file ❌");} }; reader.readAsText(file); e.target.value=""; };
+
+      return (
+        <div style={S.col}>
+          <div style={S.subNav}>
+            {[["routine","🗓 Routine"],["tasks","🏠 Tasks"],["skincare","✨ Skin"],["cycle","🌸 Cycle"],["backup","💾 Data"]].map(([s,l])=>(
+              <button key={s} onClick={()=>setSub(s)} style={{ ...S.subTab,...(sub===s?S.subTabOn:{}),fontSize:10 }}>{l}</button>
+            ))}
+          </div>
+
+          {sub==="routine" && (
+            <div style={S.col}>
+              <Card title="Regular work hours">
+                <p style={{ fontSize:12, color:C.ink3, fontStyle:"italic", marginBottom:12 }}>Your typical shift — Mon to Sat</p>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12 }}>
+                  <TimeInput label="Start" value={sc.workStart||"08:50"} onChange={v=>setField("workStart",v)} />
+                  <TimeInput label="End"   value={sc.workEnd||"18:45"}   onChange={v=>setField("workEnd",v)} />
+                </div>
+                <div style={{ borderTop:`1px solid ${C.border2}`, paddingTop:12, marginBottom:12 }}>
+                  <p style={{ fontSize:12, color:C.ink3, fontStyle:"italic", marginBottom:10 }}>Sunday / holiday hours</p>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                    <TimeInput label="Start" value={sc.sunStart||"13:20"} onChange={v=>setField("sunStart",v)} />
+                    <TimeInput label="End"   value={sc.sunEnd||"18:10"}   onChange={v=>setField("sunEnd",v)} />
+                  </div>
+                </div>
+                <div style={{ borderTop:`1px solid ${C.border2}`, paddingTop:12 }}>
+                  <label style={S.label}>Commute each way (minutes)</label>
+                  <input type="number" min="0" max="240" value={sc.commuteMins||105} onChange={e=>setField("commuteMins",Number(e.target.value))} style={S.input} />
+                  <p style={{ fontSize:11, color:C.ink3, marginTop:5, fontStyle:"italic" }}>
+                    Currently {Math.floor((sc.commuteMins||105)/60)}h {(sc.commuteMins||105)%60}min each way
+                  </p>
+                </div>
+              </Card>
+
+              <Card title="Day overrides">
+                <p style={{ fontSize:12, color:C.ink3, fontStyle:"italic", marginBottom:12 }}>Got a day off or a different shift? Set it here. The routine tab will adjust automatically.</p>
+                <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                  {next14.map(({key, label, isToday}) => {
+                    const ov = overrides[key];
+                    return (
+                      <div key={key} style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 0", borderBottom:`1px solid ${C.border2}` }}>
+                        <div style={{ flex:1 }}>
+                          <span style={{ fontSize:13, color:isToday?C.rose:C.ink, fontWeight:isToday?500:400 }}>{isToday?"Today · ":""}{label}</span>
+                          {ov && <span style={{ fontSize:11, color:ov==="off"?C.sage:C.gold, marginLeft:6, fontStyle:"italic" }}>{ov==="off"?"Day off":"Regular hours"}</span>}
+                        </div>
+                        <div style={{ display:"flex", gap:5 }}>
+                          <button onClick={()=>setOverride(key,"off")} style={{ ...S.pill, fontSize:11, padding:"3px 9px", ...(ov==="off"?{background:C.sage,color:"#fff",borderColor:C.sage}:{}) }}>Off</button>
+                          <button onClick={()=>setOverride(key,"work")} style={{ ...S.pill, fontSize:11, padding:"3px 9px", ...(ov==="work"?{background:C.gold,color:"#fff",borderColor:C.gold}:{}) }}>Work</button>
+                          {ov && <button onClick={()=>setOverride(key,"normal")} style={{ ...S.iconBtn, fontSize:16 }}>×</button>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+            </div>
+          )}
+          {sub==="tasks" && (
+            <div style={S.col}>
+              <Card title="Daily tasks">
+                <p style={{ fontSize:11, color:C.ink3, fontStyle:"italic", marginBottom:10 }}>Tap ☀️/🌙 to assign each task to your morning or evening flow.</p>
+                {dailyTasks.map((item,i)=>(
+                  <div key={i} style={{ display:"flex", alignItems:"center", gap:8, borderBottom:`1px solid ${C.border2}`, padding:"7px 0" }}>
+                    <button onClick={()=>updateTaskTimes({...taskTimes,[item]:taskTimes[item]==="morning"?"evening":"morning"})}
+                      style={{ background:taskTimes[item]==="morning"?C.gold:C.bg3, border:"none", borderRadius:7, padding:"3px 8px", fontSize:13, cursor:"pointer", flexShrink:0, color:taskTimes[item]==="morning"?"#fff":C.ink3 }}>
+                      {taskTimes[item]==="morning"?"☀️":"🌙"}
+                    </button>
+                    <span style={{ flex:1, fontSize:13, color:C.ink }}>{item}</span>
+                    <button onClick={()=>updateDailyTasks(dailyTasks.filter((_,j)=>j!==i))} style={S.iconBtn}>🗑️</button>
+                  </div>
+                ))}
+                <div style={{ display:"flex", gap:6, marginTop:8 }}>
+                  <input id="newDailyTask" placeholder="Add daily task..." style={S.input} onKeyDown={e=>{ if(e.key==="Enter"&&e.target.value.trim()){ updateDailyTasks([...dailyTasks,e.target.value.trim()]); e.target.value=""; } }} />
+                  <Btn onClick={()=>{ const el=document.getElementById("newDailyTask"); if(el&&el.value.trim()){ updateDailyTasks([...dailyTasks,el.value.trim()]); el.value=""; } }}>Add</Btn>
+                </div>
+              </Card>
+              <Card title="Weekly tasks">
+                <div style={{ display:"flex",gap:4,flexWrap:"wrap",marginBottom:10 }}>
+                  {WEEK_DAYS.map(d=><button key={d} onClick={()=>setDayOfWeek(d)} style={{ ...S.pill,...(dayOfWeek===d?S.pillOn:{}) }}>{d}</button>)}
+                </div>
+                {(weeklyTasks[dayOfWeek]||[]).map((item,i)=>(
+                  <div key={i} style={{ display:"flex", alignItems:"center", gap:8, borderBottom:`1px solid ${C.border2}`, padding:"7px 0" }}>
+                    <button onClick={()=>updateTaskTimes({...taskTimes,["weekly:"+item]:taskTimes["weekly:"+item]==="morning"?"evening":"morning"})}
+                      style={{ background:taskTimes["weekly:"+item]==="morning"?C.gold:C.bg3, border:"none", borderRadius:7, padding:"3px 8px", fontSize:13, cursor:"pointer", flexShrink:0, color:taskTimes["weekly:"+item]==="morning"?"#fff":C.ink3 }}>
+                      {taskTimes["weekly:"+item]==="morning"?"☀️":"🌙"}
+                    </button>
+                    <span style={{ flex:1, fontSize:13, color:C.ink }}>{item}</span>
+                    <button onClick={()=>updateWeeklyTasks({...weeklyTasks,[dayOfWeek]:(weeklyTasks[dayOfWeek]||[]).filter((_,j)=>j!==i)})} style={S.iconBtn}>🗑️</button>
+                  </div>
+                ))}
+                <InlineList items={weeklyTasks[dayOfWeek]||[]} onUpdate={n=>updateWeeklyTasks({...weeklyTasks,[dayOfWeek]:n})} placeholder={"Task for "+dayOfWeek+"..."} />
+              </Card>
+              <EditableList title="Monthly tasks" items={monthlyTasks} onUpdate={updateMonthlyTasks} placeholder="Add monthly task..." />
+            </div>
+          )}
+          {sub==="skincare" && (
+            <div style={S.col}>
+              <EditableList title="AM routine" items={skincareSteps.am||[]} onUpdate={n=>updateSkincareSteps({...skincareSteps,am:n})} placeholder="Add AM step..." />
+              <EditableList title="PM routine" items={skincareSteps.pm||[]} onUpdate={n=>updateSkincareSteps({...skincareSteps,pm:n})} placeholder="Add PM step..." />
+            </div>
+          )}
+          {sub==="cycle" && <EditableList title="Cycle symptoms" items={symptoms} onUpdate={updateSymptoms} placeholder="Add symptom..." />}
+          {sub==="backup" && (
+            <Card title="Backup & restore">
+              <p style={{ fontSize:13,color:C.ink2,margin:"0 0 14px",lineHeight:1.6 }}>Your data lives in this browser's storage. Export regularly so you never lose it.</p>
+              <Btn full onClick={exportData}>⬇ Export backup</Btn>
+              <div style={{ marginTop:10 }}>
+                <label style={{ ...S.btn, display:"block", textAlign:"center", cursor:"pointer", boxSizing:"border-box", width:"100%", borderRadius:9 }}>
+                  ⬆ Import backup
+                  <input type="file" accept=".json" onChange={importData} style={{display:"none"}} />
+                </label>
+              </div>
+            </Card>
+          )}
+        </div>
+      );
+    }
+
+    function EditableList({ title, items, onUpdate, placeholder }) {
+      const [input,setInput]=useState("");
+      const [editing,setEditing]=useState(null);
+      const [editVal,setEditVal]=useState("");
+      const add=()=>{ if(!input.trim()) return; onUpdate([...items,input.trim()]); setInput(""); };
+      const remove=i=>onUpdate(items.filter((_,j)=>j!==i));
+      const saveEdit=i=>{ onUpdate(items.map((x,j)=>j===i?editVal:x)); setEditing(null); };
+      const move=(i,dir)=>{ const a=[...items]; [a[i],a[i+dir]]=[a[i+dir],a[i]]; onUpdate(a); };
+      return (
+        <Card title={title}>
+          {items.map((item,i)=>
+            editing===i?(
+              <div key={i} style={{ display:"flex",gap:6,padding:"5px 0",borderBottom:`1px solid ${C.border2}` }}>
+                <input value={editVal} onChange={e=>setEditVal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&saveEdit(i)} style={{ ...S.input,flex:1 }} autoFocus />
+                <Btn onClick={()=>saveEdit(i)}>Save</Btn>
+                <button onClick={()=>setEditing(null)} style={S.ghostBtn}>✕</button>
+              </div>
+            ):(
+              <div key={i} style={{ display:"flex",alignItems:"center",gap:6,borderBottom:`1px solid ${C.border2}`,padding:"5px 0" }}>
+                <div style={{ display:"flex",flexDirection:"column" }}>
+                  <button onClick={()=>i>0&&move(i,-1)} style={{ ...S.iconBtn,fontSize:9,padding:"1px 3px",opacity:i===0?0.3:1 }}>▲</button>
+                  <button onClick={()=>i<items.length-1&&move(i,1)} style={{ ...S.iconBtn,fontSize:9,padding:"1px 3px",opacity:i===items.length-1?0.3:1 }}>▼</button>
+                </div>
+                <span style={{ flex:1,fontSize:13,color:C.ink }}>{item}</span>
+                <button onClick={()=>{setEditing(i);setEditVal(item);}} style={S.iconBtn}>✏️</button>
+                <button onClick={()=>remove(i)} style={S.iconBtn}>🗑️</button>
+              </div>
+            )
+          )}
+          <div style={{ display:"flex",gap:6,marginTop:8 }}>
+            <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder={placeholder} style={S.input} />
+            <Btn onClick={add}>Add</Btn>
+          </div>
+        </Card>
+      );
+    }
+
+    function InlineList({ items, onUpdate, placeholder }) {
+      const [input,setInput]=useState("");
+      const add=()=>{ if(!input.trim()) return; onUpdate([...items,input.trim()]); setInput(""); };
+      return (
+        <div>
+          {items.map((item,i)=>(
+            <div key={i} style={{ display:"flex",alignItems:"center",gap:6,marginBottom:3 }}>
+              <span style={{ flex:1,fontSize:12,color:C.ink }}>{item}</span>
+              <button onClick={()=>onUpdate(items.filter((_,j)=>j!==i))} style={S.iconBtn}>🗑️</button>
+            </div>
+          ))}
+          <div style={{ display:"flex",gap:6,marginTop:4 }}>
+            <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder={placeholder} style={{ ...S.input,fontSize:12,padding:"6px 10px" }} />
+            <Btn onClick={add} small>+</Btn>
+          </div>
+        </div>
+      );
+    }
+
+    // ── MOUNT ─────────────────────────────────────────────────────────────────
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
